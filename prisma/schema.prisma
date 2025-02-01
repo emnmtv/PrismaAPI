@@ -1,0 +1,23 @@
+
+
+datasource db {
+  provider = "mysql"
+  url      = "mysql://root:@localhost:3306/prisma_db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id          Int      @id @default(autoincrement())
+  email       String   @unique
+  password    String
+  firstName   String?
+  lastName    String?
+  phoneNumber String?
+  address     String?
+  dateOfBirth DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

@@ -1,0 +1,126 @@
+
+POST http://localhost:3001/info-continue
+Content-Type: application/json
+
+{
+  "info": "Test continue"
+}
+
+###
+POST http://localhost:3001/info-switching
+Content-Type: application/json
+
+{
+  "info": "Test switching"
+}
+
+###
+POST http://localhost:3001/info-processing
+Content-Type: application/json
+
+{
+  "info": "Test processing"
+}
+
+
+
+
+###
+# Successful responses
+POST http://localhost:3001/success-ok
+Content-Type: application/json
+
+{
+  "status": "OK"
+}
+
+###
+POST http://localhost:3001/success-created
+Content-Type: application/json
+
+{
+  "name": "New Resource"
+}
+
+###
+POST http://localhost:3001/success-no-content
+Content-Type: application/json
+
+{
+  "info": "No content"
+}
+
+###
+# Redirection messages
+POST http://localhost:3001/redirect-moved
+Content-Type: application/json
+
+{
+  "redirect": "Permanent"
+}
+
+###
+POST http://localhost:3001/redirect-found
+Content-Type: application/json
+
+{
+  "redirect": "Temporary"
+}
+
+###
+POST http://localhost:3001/redirect-see-other
+Content-Type: application/json
+
+{
+  "redirect": "Other"
+}
+
+###
+# Client error responses
+POST http://localhost:3001/client-bad-request
+Content-Type: application/json
+
+{
+  "error": "Test bad request"
+}
+
+###
+POST http://localhost:3001/client-unauthorized
+Content-Type: application/json
+
+{
+  "error": "Test unauthorized"
+}
+
+###
+POST http://localhost:3001/client-not-found
+Content-Type: application/json
+
+{
+  "error": "Test not found"
+}
+
+###
+# Server error responses
+POST http://localhost:3001/server-error
+Content-Type: application/json
+
+{
+  "error": "Test server error"
+}
+
+###
+POST http://localhost:3001/server-not-implemented
+Content-Type: application/json
+
+{
+  "error": "Test not implemented"
+}
+
+###
+POST http://localhost:3001/server-bad-gateway
+Content-Type: application/json
+
+{
+  "error": "Test bad gateway"
+}
