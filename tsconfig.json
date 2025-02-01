@@ -35,6 +35,8 @@
     /* Interop Constraints */
     "forceConsistentCasingInFileNames": true // Ensure consistent casing in file names
   },
-  "include": ["src/**/*"], // Include all files in the 'src' directory
+  "include": ["src/**/*",
+  "src/custom.d.ts"
+  ], // Include all files in the 'src' directory
   "exclude": ["node_modules", "dist"] // Exclude 'node_modules' and 'dist' directories
 }
