@@ -10,7 +10,7 @@
   "author": "mel",
   "license": "ISC",
   "dependencies": {
-    "@prisma/client": "^6.3.0",
+    "@prisma/client": "^6.3.1",
     "@types/node": "^22.13.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
