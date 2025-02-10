@@ -1,7 +1,8 @@
 import { Response } from 'express';
 import { AuthRequest } from '@/middleware/authRequest';
-import { registerUser, loginUser, fetchProfile, updateUserProfile } from '../utils/authUtils';
+import { registerUser, loginUser, fetchProfile, updateUserProfile,prisma } from '../utils/authUtils';
 
+// Register a new user
 // Register a new user
 const register = async (req: AuthRequest, res: Response) => {
   const {
@@ -24,7 +25,38 @@ const register = async (req: AuthRequest, res: Response) => {
       address,
       dateOfBirth ? new Date(dateOfBirth) : undefined
     );
-    res.status(201).json({ message: 'User registered successfully', user });
+    res.status(201).json({ message: 'User registered successfully. Please verify your email.', user });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+// Verify Email
+const verifyEmail = async (req: AuthRequest, res: Response) => {
+  const { email, code } = req.body;
+
+  try {
+    // Find user by email
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Check if the verification code matches
+    if (user.verificationCode !== code) {
+      throw new Error('Invalid verification code');
+    }
+
+    // Update the user's verified status
+    await prisma.user.update({
+      where: { email },
+      data: {
+        verified: true,
+        verificationCode: null, // Clear the verification code after success
+      },
+    });
+
+    res.status(200).json({ message: 'Email verified successfully' });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }
@@ -73,4 +105,4 @@ const updateProfile = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export { register, login, getProfile, updateProfile };
+export { register, login, getProfile, updateProfile,verifyEmail};
