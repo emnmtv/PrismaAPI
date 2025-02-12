@@ -1,10 +1,15 @@
 import { Response } from 'express';
 import { AuthRequest } from '@/middleware/authRequest';
-import { registerUser, loginUser, fetchProfile, updateUserProfile,prisma } from '../utils/authUtils';
+import { 
+  registerUser, 
+  loginUser, 
+  fetchProfile, 
+  updateUserProfile, 
+  prisma 
+} from '../utils/authUtils';
 
-// Register a new user
-// Register a new user
-const register = async (req: AuthRequest, res: Response) => {
+// Handle User Registration
+const handleRegister = async (req: AuthRequest, res: Response) => {
   const {
     email,
     password,
@@ -30,29 +35,27 @@ const register = async (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: (error as Error).message });
   }
 };
-// Verify Email
-const verifyEmail = async (req: AuthRequest, res: Response) => {
+
+// Handle Email Verification
+const handleEmailVerification = async (req: AuthRequest, res: Response) => {
   const { email, code } = req.body;
 
   try {
-    // Find user by email
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
       throw new Error('User not found');
     }
 
-    // Check if the verification code matches
     if (user.verificationCode !== code) {
       throw new Error('Invalid verification code');
     }
 
-    // Update the user's verified status
     await prisma.user.update({
       where: { email },
       data: {
         verified: true,
-        verificationCode: null, // Clear the verification code after success
+        verificationCode: null,
       },
     });
 
@@ -62,8 +65,8 @@ const verifyEmail = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// Login a user
-const login = async (req: AuthRequest, res: Response) => {
+// Handle User Login
+const handleLogin = async (req: AuthRequest, res: Response) => {
   const { email, password } = req.body;
   try {
     const token = await loginUser(email, password);
@@ -73,9 +76,8 @@ const login = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// Fetch a user's profile
-const getProfile = async (req: AuthRequest, res: Response) => {
-  // Now TypeScript recognizes req.user
+// Handle Fetching User Profile
+const handleGetProfile = async (req: AuthRequest, res: Response) => {
   const userId = req.user!.userId;
   try {
     const userProfile = await fetchProfile(userId);
@@ -85,9 +87,9 @@ const getProfile = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// Update a user's profile
-const updateProfile = async (req: AuthRequest, res: Response) => {
-  const userId = req.user!.userId; // Get userId from the token
+// Handle Updating User Profile
+const handleUpdateProfile = async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.userId;
   const { firstName, lastName, phoneNumber, address, dateOfBirth } = req.body;
 
   try {
@@ -105,4 +107,10 @@ const updateProfile = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export { register, login, getProfile, updateProfile,verifyEmail};
+export { 
+  handleRegister, 
+  handleLogin, 
+  handleGetProfile, 
+  handleUpdateProfile, 
+  handleEmailVerification 
+};
