@@ -28,8 +28,7 @@ const sendVerificationEmail = async (email: string, verificationCode: string) =>
 
   await transporter.sendMail(mailOptions);
 };
-// Register a new user
-// Register a new user
+// Register a new user with role
 const registerUser = async (
   email: string,
   password: string,
@@ -37,7 +36,8 @@ const registerUser = async (
   lastName?: string,
   phoneNumber?: string,
   address?: string,
-  dateOfBirth?: Date
+  dateOfBirth?: Date,
+  role: string = 'user'  // Default role is 'user'
 ) => {
   const hashedPassword = await bcrypt.hash(password, 10);
   const verificationCode = generateVerificationCode();
@@ -52,19 +52,21 @@ const registerUser = async (
       address,
       dateOfBirth,
       verificationCode,
-      verified: false, // Mark user as unverified
+      verified: false, // User is initially unverified
+      role,            // Assign the provided role
     },
   });
 
-  
   // Send the verification code via email
   await sendVerificationEmail(email, verificationCode);
 
   return user;
 };
+
+// Login User
 const loginUser = async (email: string, password: string) => {
   const user = await prisma.user.findUnique({ where: { email } });
-  
+
   if (!user) {
     throw new Error('User not found');
   }
@@ -78,12 +80,11 @@ const loginUser = async (email: string, password: string) => {
     throw new Error('Invalid password');
   }
 
-  const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '1h' });
+  const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '24hrs' });
   return token;
 };
 
-
-// Fetch a user's profile
+// Fetch Profile
 const fetchProfile = async (userId: number) => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -95,13 +96,16 @@ const fetchProfile = async (userId: number) => {
       phoneNumber: true,
       address: true,
       dateOfBirth: true,
+      role: true,    // Include the role
       createdAt: true,
       updatedAt: true,
     },
   });
+
   if (!user) {
     throw new Error('User not found');
   }
+
   return user;
 };
 
@@ -127,4 +131,75 @@ const updateUserProfile = async (
   return updatedUser;
 };
 
-export { registerUser, loginUser, fetchProfile, updateUserProfile, prisma };
+
+const upgradeToCreator = async (
+  userId: number,
+  offers: string,
+  bio?: string,
+  profession?: string,
+  typeOfProfession?: string,
+  genre?: string
+) => {
+  // Update user role
+  const updatedUser = await prisma.user.update({
+    where: { id: userId },
+    data: { role: 'creator' },
+  });
+
+  // Create Creator Profile
+  const creatorProfile = await prisma.creatorProfile.create({
+    data: {
+      userId,
+      offers,
+      bio,
+      profession,
+      typeOfProfession,
+      genre,
+    },
+  });
+
+  return { ...updatedUser, creatorProfile };
+};
+
+// Function to edit the Creator Profile
+const editCreatorProfile = async (
+  userId: number,
+  offers?: string,
+  bio?: string,
+  profession?: string,
+  typeOfProfession?: string,
+  genre?: string
+) => {
+  // Ensure 'offers' is a valid string, if not, throw an error
+  if (!offers) {
+    throw new Error('The offers field is required');
+  }
+
+  // Update Creator Profile if it exists, otherwise create it
+  const updatedProfile = await prisma.creatorProfile.upsert({
+    where: { userId },
+    update: {
+      offers,
+      bio: bio || undefined,
+      profession: profession || undefined,
+      typeOfProfession: typeOfProfession || undefined,
+      genre: genre || undefined,
+    },
+    create: {
+      userId,
+      offers,
+      bio,
+      profession,
+      typeOfProfession,
+      genre,
+    },
+  });
+
+  return updatedProfile;
+};
+export { registerUser, 
+  loginUser, fetchProfile, 
+  updateUserProfile, prisma, 
+  upgradeToCreator,
+  editCreatorProfile
+};

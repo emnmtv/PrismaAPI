@@ -10,6 +10,7 @@ CREATE TABLE `User` (
     `dateOfBirth` DATETIME(3) NULL,
     `verified` BOOLEAN NOT NULL DEFAULT false,
     `verificationCode` VARCHAR(191) NULL,
+    `role` ENUM('USER', 'CREATOR', 'ADMIN') NOT NULL DEFAULT 'USER',
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 

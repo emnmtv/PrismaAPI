@@ -9,6 +9,7 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// models/schema.prisma
 model User {
   id               Int      @id @default(autoincrement())
   email            String   @unique
@@ -20,6 +21,23 @@ model User {
   dateOfBirth      DateTime?
   verified         Boolean  @default(false)
   verificationCode String?
+  role             String   @default("user") // user, creator, admin
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
+  creatorProfile   CreatorProfile?
+}
+
+model CreatorProfile {
+  id               Int      @id @default(autoincrement())
+  userId           Int     @unique
+  offers           String  // e.g., "luthier, guitarist"
+  bio              String?
+  profession       String? // e.g., "Musician", "Producer", etc.
+  typeOfProfession String? // e.g., "Guitarist", "Drummer", etc.
+  genre            String? // e.g., "Rock", "Classical", etc.
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User    @relation(fields: [userId], references: [id])
 }
