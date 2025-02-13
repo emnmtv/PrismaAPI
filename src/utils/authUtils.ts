@@ -197,9 +197,89 @@ const editCreatorProfile = async (
 
   return updatedProfile;
 };
+
+const createPost = async (
+  userId: number,
+  title: string,
+  description: string,
+  image?: string, // Base64 encoded image
+  video?: string // Base64 encoded video
+) => {
+  try {
+    // Check if the user has already created a post
+    const existingPost = await prisma.post.findFirst({
+      where: { userId },
+    });
+
+    if (existingPost) {
+      throw new Error('User already has a post. Only one post is allowed.');
+    }
+
+    // Create the new post if no existing post found
+    const newPost = await prisma.post.create({
+      data: {
+        userId,
+        title,
+        description,
+        image, // Image is saved as base64 string
+        video, // Video is saved as base64 string
+      },
+    });
+
+    return newPost;
+  } catch (error: unknown) {
+    // Check if the error is an instance of Error and access the message
+    if (error instanceof Error) {
+      throw new Error(error.message || 'Failed to create post');
+    }
+    throw new Error('An unknown error occurred');
+  }
+};
+
+
+// authUtils.ts
+export const updatePost = async (
+  postId: number,
+  title: string,
+  description: string,
+  image?: string, // Base64 encoded image
+  video?: string // Base64 encoded video
+) => {
+  try {
+    const updatedPost = await prisma.post.update({
+      where: { id: postId },
+      data: {
+        title,
+        description,
+        image, // Image is saved as base64 string
+        video, // Video is saved as base64 string
+      },
+    });
+
+    return updatedPost;
+  } catch (error) {
+    throw new Error('Failed to update post');
+  }
+};
+// authUtils.ts
+export const deletePost = async (postId: number) => {
+  try {
+    await prisma.post.delete({
+      where: { id: postId },
+    });
+  } catch (error) {
+    throw new Error('Failed to delete post');
+  }
+};
+
+
+
 export { registerUser, 
   loginUser, fetchProfile, 
   updateUserProfile, prisma, 
   upgradeToCreator,
-  editCreatorProfile
+  editCreatorProfile,
+  createPost,
+
+
 };

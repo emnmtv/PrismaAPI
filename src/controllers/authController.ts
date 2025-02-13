@@ -1,5 +1,6 @@
-import { Response } from 'express';
+import { Response,Request, } from 'express';
 import { AuthRequest } from '@/middleware/authRequest';
+
 import { 
   registerUser, 
   loginUser, 
@@ -7,7 +8,11 @@ import {
   updateUserProfile, 
   prisma,
   upgradeToCreator,
-  editCreatorProfile
+  editCreatorProfile,
+  createPost,
+  updatePost,
+  deletePost
+
 } from '../utils/authUtils';
 
 // Handle User Registration
@@ -208,6 +213,195 @@ const handleEditCreatorProfile = async (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: (error as Error).message });
   }
 };
+
+
+
+const handleCreatePost = async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.userId; // Assuming user is authenticated
+  const { title, description } = req.body;
+
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const image = files?.image?.[0]?.filename;
+  const video = files?.video?.[0]?.filename;
+
+  try {
+    if (!title || !description) {
+      throw new Error('Title and description are required');
+    }
+
+    // Call the function to create the post
+    const post = await createPost(userId, title, description, image, video);
+
+    res.status(200).json({
+      message: 'Post created successfully',
+      post,
+    });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+
+export const handleGetUserWithProfileAndPosts = async (req: Request, res: Response): Promise<void> => {
+  try {
+    console.log("Received request at /viewpost");
+    console.log("Query Params:", req.query); // Debugging
+
+    const userId = req.query.userId as string; // Extract userId from query params
+
+    if (!userId) {
+      console.log("Missing userId parameter");
+      res.status(400).json({ message: "Missing userId parameter" });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: Number(userId) },
+      include: {
+        creatorProfile: true,
+        posts: true,
+      },
+    });
+
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    // Convert file paths to full URLs
+    const userWithMedia = {
+      ...user,
+      posts: user.posts.map(post => ({
+        ...post,
+        image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
+        video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
+      })),
+    };
+
+    res.status(200).json(userWithMedia);
+  } catch (error) {
+    console.error("Error fetching user data:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+export const handleGetPostWithUserDetails = async (req: Request, res: Response): Promise<void> => {
+  try {
+    console.log("Received request at /viewpostwithuser");
+    console.log("Query Params:", req.query); // Debugging
+
+    const postId = req.query.postId as string; // Extract postId from query params
+
+    if (!postId) {
+      console.log("Missing postId parameter");
+      res.status(400).json({ message: "Missing postId parameter" });
+      return;
+    }
+
+    const post = await prisma.post.findUnique({
+      where: { id: Number(postId) },
+      include: {
+        user: {
+          include: {
+            creatorProfile: true,
+          },
+        },
+      },
+    });
+
+    if (!post) {
+      res.status(404).json({ message: "Post not found" });
+      return;
+    }
+
+    // Convert file paths to full URLs
+    const postWithUserDetails = {
+      ...post,
+      image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
+      video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
+      user: {
+        ...post.user,
+        creatorProfile: post.user.creatorProfile ? {
+          ...post.user.creatorProfile,
+        } : null,
+      },
+    };
+
+    res.status(200).json(postWithUserDetails);
+  } catch (error) {
+    console.error("Error fetching post with user data:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// authController.ts
+export const handleEditPost = async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.userId; // Assuming user is authenticated
+  const { postId, title, description } = req.body;
+
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const image = files?.image?.[0]?.filename;
+  const video = files?.video?.[0]?.filename;
+
+  try {
+    if (!postId || !title || !description) {
+      throw new Error('Post ID, title, and description are required');
+    }
+
+    // Check if the post exists and if the user is the owner
+    const post = await prisma.post.findUnique({ where: { id: postId } });
+
+    if (!post) {
+      throw new Error('Post not found');
+    }
+
+    if (post.userId !== userId) {
+      throw new Error('You can only edit your own posts');
+    }
+
+    // Call the function to update the post
+    const updatedPost = await updatePost(postId, title, description, image, video);
+
+    res.status(200).json({
+      message: 'Post updated successfully',
+      post: updatedPost,
+    });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// authController.ts
+export const handleDeletePost = async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.userId; // Assuming user is authenticated
+  const { postId } = req.body;
+
+  try {
+    if (!postId) {
+      throw new Error('Post ID is required');
+    }
+
+    // Check if the post exists and if the user is the owner
+    const post = await prisma.post.findUnique({ where: { id: postId } });
+
+    if (!post) {
+      throw new Error('Post not found');
+    }
+
+    if (post.userId !== userId) {
+      throw new Error('You can only delete your own posts');
+    }
+
+    // Call the function to delete the post
+    await deletePost(postId);
+
+    res.status(200).json({
+      message: 'Post deleted successfully',
+    });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
 export { 
   handleRegister, 
   handleLogin, 
@@ -216,5 +410,7 @@ export {
   handleEmailVerification,
   handleUpgradeToCreator,
   handleGetCreatorProfile,
-  handleEditCreatorProfile
+  handleEditCreatorProfile,
+  handleCreatePost,
+
 };
