@@ -11,7 +11,8 @@ import {
   editCreatorProfile,
   createPost,
   updatePost,
-  deletePost
+  deletePost,
+
 
 } from '../utils/authUtils';
 
@@ -242,7 +243,52 @@ const handleCreatePost = async (req: AuthRequest, res: Response) => {
 };
 
 
-export const handleGetUserWithProfileAndPosts = async (req: Request, res: Response): Promise<void> => {
+export const handleGetUserWithProfileAndPosts = async (
+  req: AuthRequest, // Use AuthRequest type to access user from token
+  res: Response
+): Promise<void> => {
+  try {
+    console.log("Received request at /viewpost");
+    console.log("Headers:", req.headers); // Debugging to see the headers for the token
+
+    const userId = req.user?.userId; // Extract userId from the token payload
+
+    if (!userId) {
+      console.log("User not authenticated");
+      res.status(401).json({ message: "User not authenticated" });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        creatorProfile: true,
+        posts: true,
+      },
+    });
+
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    // Convert file paths to full URLs
+    const userWithMedia = {
+      ...user,
+      posts: user.posts.map(post => ({
+        ...post,
+        image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
+        video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
+      })),
+    };
+
+    res.status(200).json(userWithMedia);
+  } catch (error) {
+    console.error("Error fetching user data:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+export const handleGetUserWithProfileAndPosts2 = async (req: Request, res: Response): Promise<void> => {
   try {
     console.log("Received request at /viewpost");
     console.log("Query Params:", req.query); // Debugging
@@ -333,6 +379,48 @@ export const handleGetPostWithUserDetails = async (req: Request, res: Response):
   }
 };
 
+export const handleGetAllPostsWithUserDetails = async (req: Request, res: Response): Promise<void> => {
+  try {
+    console.log("Received request at /viewallpostswithuser");
+    console.log("Query Params:", req.query); // Debugging
+
+    // Fetch all posts with user details
+    const posts = await prisma.post.findMany({
+      include: {
+        user: {
+          include: {
+            creatorProfile: true,
+          },
+        },
+      },
+    });
+
+    if (!posts || posts.length === 0) {
+      res.status(404).json({ message: "No posts found" });
+      return;
+    }
+
+    // Map through all posts and convert file paths to full URLs
+    const postsWithUserDetails = posts.map((post) => ({
+      ...post,
+      image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
+      video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
+      user: {
+        ...post.user,
+        creatorProfile: post.user.creatorProfile ? {
+          ...post.user.creatorProfile,
+        } : null,
+      },
+    }));
+
+    res.status(200).json(postsWithUserDetails);
+  } catch (error) {
+    console.error("Error fetching posts with user data:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+
 // authController.ts
 export const handleEditPost = async (req: AuthRequest, res: Response) => {
   const userId = req.user!.userId; // Assuming user is authenticated
@@ -401,6 +489,8 @@ export const handleDeletePost = async (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: (error as Error).message });
   }
 };
+
+
 
 export { 
   handleRegister, 

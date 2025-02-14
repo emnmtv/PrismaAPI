@@ -14,10 +14,13 @@ import {
   handleGetPostWithUserDetails,
   handleEditPost,
   handleDeletePost,
+  handleGetUserWithProfileAndPosts2,
+  handleGetAllPostsWithUserDetails,
 
 
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
+
 
 const authRouter = express.Router();
 
@@ -25,9 +28,9 @@ const authRouter = express.Router();
 authRouter.post('/register', handleRegister);
 authRouter.post('/login', handleLogin);
 authRouter.post('/verify', handleEmailVerification);
-authRouter.get('/viewuserpost', handleGetUserWithProfileAndPosts);
+authRouter.get('/viewuserpost2', handleGetUserWithProfileAndPosts2);
 authRouter.get('/viewpost', handleGetPostWithUserDetails);
-
+authRouter.get('/allpost', handleGetAllPostsWithUserDetails);
 
 
 
@@ -35,10 +38,13 @@ authRouter.get('/viewpost', handleGetPostWithUserDetails);
 authRouter.get('/profile', authenticateToken, handleGetProfile);
 authRouter.put('/profile', authenticateToken, handleUpdateProfile);
 authRouter.post('/upgrade', authenticateToken,handleUpgradeToCreator);
+// authRouter.post('/payment', handlePayment);
 authRouter.get('/cprofile', authenticateToken,handleGetCreatorProfile);
 authRouter.put('/editcprofile', authenticateToken,handleEditCreatorProfile);
 authRouter.put('/editpost', authenticateToken,handleEditPost);
 authRouter.put('/delete', authenticateToken,handleDeletePost);
 authRouter.post('/createpost', upload.fields([{ name: 'image' }, { name: 'video' }]),authenticateToken,handleCreatePost);
+authRouter.get('/viewuserpost',authenticateToken, handleGetUserWithProfileAndPosts);
+
 
 export { authRouter };

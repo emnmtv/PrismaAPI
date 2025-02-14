@@ -2,8 +2,11 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
+
+
 const prisma = new PrismaClient();
 const JWT_SECRET = 'your_jwt_secret'; // Replace with a strong secret key
+
 
 const generateVerificationCode = (): string => {
   return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code

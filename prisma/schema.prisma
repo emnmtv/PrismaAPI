@@ -24,7 +24,7 @@ model User {
   role             String   @default("user") // user, creator, admin
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-
+  payments         Payment[] // Add this inverse relation for payments
   creatorProfile   CreatorProfile?
   posts            Post[]   // Add this relation field for inverse relation
 }
@@ -37,11 +37,13 @@ model CreatorProfile {
   profession       String? // e.g., "Musician", "Producer", etc.
   typeOfProfession String? // e.g., "Guitarist", "Drummer", etc.
   genre            String? // e.g., "Rock", "Classical", etc.
+  earnings         Float   @default(0.0) // New field for creator earnings
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   user             User    @relation(fields: [userId], references: [id])
 }
+
 
 model Post {
   id          Int      @id @default(autoincrement())
@@ -54,4 +56,18 @@ model Post {
   updatedAt   DateTime @updatedAt
 
   user        User     @relation(fields: [userId], references: [id])
+}
+
+model Payment {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  referenceNumber  String
+  checkoutUrl      String
+  amount           Int      // Store amount in the smallest unit (e.g., cents)
+  description      String
+  status           String   // Store the status of the payment (e.g., "unpaid", "paid")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User     @relation(fields: [userId], references: [id])
 }
