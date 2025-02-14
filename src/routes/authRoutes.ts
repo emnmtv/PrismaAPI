@@ -16,7 +16,8 @@ import {
   handleDeletePost,
   handleGetUserWithProfileAndPosts2,
   handleGetAllPostsWithUserDetails,
-
+  handleInitiatePayment,
+  
 
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
@@ -38,7 +39,7 @@ authRouter.get('/allpost', handleGetAllPostsWithUserDetails);
 authRouter.get('/profile', authenticateToken, handleGetProfile);
 authRouter.put('/profile', authenticateToken, handleUpdateProfile);
 authRouter.post('/upgrade', authenticateToken,handleUpgradeToCreator);
-// authRouter.post('/payment', handlePayment);
+authRouter.post('/payment', handleInitiatePayment);
 authRouter.get('/cprofile', authenticateToken,handleGetCreatorProfile);
 authRouter.put('/editcprofile', authenticateToken,handleEditCreatorProfile);
 authRouter.put('/editpost', authenticateToken,handleEditPost);

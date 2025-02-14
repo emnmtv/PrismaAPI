@@ -12,6 +12,8 @@ import {
   createPost,
   updatePost,
   deletePost,
+  createPaymentLink,
+  
 
 
 } from '../utils/authUtils';
@@ -490,8 +492,31 @@ export const handleDeletePost = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// Controller function to initiate payment
+export const handleInitiatePayment = async (req: Request, res: Response): Promise<void> => {
+  const { amount, description, remarks } = req.body;
 
+  if (!amount || !description || !remarks) {
+    res.status(400).json({ error: 'Missing required fields' });
+    return; // Ensure the function exits after sending the response
+  }
 
+  try {
+    // Create the payment link using the utility function
+    const paymentLink = await createPaymentLink(amount, description, remarks);
+
+    // Send response with payment link data
+    res.status(200).json({
+      message: 'Payment link created successfully.',
+      paymentUrl: paymentLink.checkoutUrl,
+      referenceNumber: paymentLink.referenceNumber,
+      status: paymentLink.status,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to create payment link' });
+  }
+};
 export { 
   handleRegister, 
   handleLogin, 

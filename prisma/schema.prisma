@@ -27,6 +27,7 @@ model User {
   payments         Payment[] // Add this inverse relation for payments
   creatorProfile   CreatorProfile?
   posts            Post[]   // Add this relation field for inverse relation
+   
 }
 
 model CreatorProfile {
@@ -46,16 +47,16 @@ model CreatorProfile {
 
 
 model Post {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   userId      Int
   title       String
   description String
-  image       String?  // Base64 encoded image
-  video       String?  // Base64 encoded video
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  image       String?   // Base64 encoded image
+  video       String?   // Base64 encoded video
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  user        User     @relation(fields: [userId], references: [id])
+  user        User      @relation(fields: [userId], references: [id])
 }
 
 model Payment {
@@ -65,9 +66,11 @@ model Payment {
   checkoutUrl      String
   amount           Int      // Store amount in the smallest unit (e.g., cents)
   description      String
+  remarks          String?  // Add remarks field
   status           String   // Store the status of the payment (e.g., "unpaid", "paid")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   user             User     @relation(fields: [userId], references: [id])
 }
+

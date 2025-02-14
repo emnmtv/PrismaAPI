@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
-
+import axios from 'axios';
 
 const prisma = new PrismaClient();
 const JWT_SECRET = 'your_jwt_secret'; // Replace with a strong secret key
@@ -275,7 +275,50 @@ export const deletePost = async (postId: number) => {
   }
 };
 
+const PAYMONGO_API_URL = 'https://api.paymongo.com/v1/links'; // PayMongo API URL
 
+// Encode the API key in Base64
+const apiKey = 'sk_test_wot9ap8ESEBzf3RUB7m7zPRr';
+const base64ApiKey = Buffer.from(apiKey + ':').toString('base64');
+
+// Function to create a payment link
+export const createPaymentLink = async (amount: number, description: string, remarks: string) => {
+  try {
+    const response = await axios.post(
+      PAYMONGO_API_URL,
+      {
+        data: {
+          attributes: {
+            amount: amount, // amount in the smallest unit (e.g., cents)
+            description: description,
+            remarks: remarks,
+          },
+        },
+      },
+      {
+        headers: {
+          accept: 'application/json',
+          authorization: `Basic ${base64ApiKey}`, // Use the Base64-encoded API key
+          'content-type': 'application/json',
+        },
+      }
+    );
+
+    // Extract relevant data from the response
+    const { data } = response.data;
+    const paymentLink = {
+      checkoutUrl: data.attributes.checkout_url,
+      referenceNumber: data.attributes.reference_number,
+      status: data.attributes.status,
+    };
+
+    // Return the payment link details
+    return paymentLink;
+  } catch (error) {
+    console.error('Error creating payment link:', error);
+    throw new Error('Failed to create payment link');
+  }
+};
 
 export { registerUser, 
   loginUser, fetchProfile, 

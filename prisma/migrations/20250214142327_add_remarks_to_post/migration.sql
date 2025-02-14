@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `post` MODIFY `amount` INTEGER NOT NULL DEFAULT 0;
