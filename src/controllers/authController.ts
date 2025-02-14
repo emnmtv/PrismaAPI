@@ -221,7 +221,7 @@ const handleEditCreatorProfile = async (req: AuthRequest, res: Response) => {
 
 const handleCreatePost = async (req: AuthRequest, res: Response) => {
   const userId = req.user!.userId; // Assuming user is authenticated
-  const { title, description } = req.body;
+  const { title, description, detailedDescription, amount, remarks } = req.body;
 
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
   const image = files?.image?.[0]?.filename;
@@ -233,7 +233,16 @@ const handleCreatePost = async (req: AuthRequest, res: Response) => {
     }
 
     // Call the function to create the post
-    const post = await createPost(userId, title, description, image, video);
+    const post = await createPost(
+      userId,
+      title,
+      description,
+      detailedDescription,
+      amount,
+      remarks,
+      image,
+      video
+    );
 
     res.status(200).json({
       message: 'Post created successfully',
@@ -244,7 +253,50 @@ const handleCreatePost = async (req: AuthRequest, res: Response) => {
   }
 };
 
+export const handleEditPost = async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.userId; // Assuming user is authenticated
+  const { postId, title, description, detailedDescription, amount, remarks } = req.body;
 
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const image = files?.image?.[0]?.filename;
+  const video = files?.video?.[0]?.filename;
+
+  try {
+    if (!postId || !title || !description) {
+      throw new Error('Post ID, title, and description are required');
+    }
+
+    // Check if the post exists and if the user is the owner
+    const post = await prisma.post.findUnique({ where: { id: postId } });
+
+    if (!post) {
+      throw new Error('Post not found');
+    }
+
+    if (post.userId !== userId) {
+      throw new Error('You can only edit your own posts');
+    }
+
+    // Call the function to update the post
+    const updatedPost = await updatePost(
+      postId,
+      title,
+      description,
+      detailedDescription,
+      amount,
+      remarks,
+      image,
+      video
+    );
+
+    res.status(200).json({
+      message: 'Post updated successfully',
+      post: updatedPost,
+    });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
 export const handleGetUserWithProfileAndPosts = async (
   req: AuthRequest, // Use AuthRequest type to access user from token
   res: Response
@@ -423,42 +475,6 @@ export const handleGetAllPostsWithUserDetails = async (req: Request, res: Respon
 };
 
 
-// authController.ts
-export const handleEditPost = async (req: AuthRequest, res: Response) => {
-  const userId = req.user!.userId; // Assuming user is authenticated
-  const { postId, title, description } = req.body;
-
-  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-  const image = files?.image?.[0]?.filename;
-  const video = files?.video?.[0]?.filename;
-
-  try {
-    if (!postId || !title || !description) {
-      throw new Error('Post ID, title, and description are required');
-    }
-
-    // Check if the post exists and if the user is the owner
-    const post = await prisma.post.findUnique({ where: { id: postId } });
-
-    if (!post) {
-      throw new Error('Post not found');
-    }
-
-    if (post.userId !== userId) {
-      throw new Error('You can only edit your own posts');
-    }
-
-    // Call the function to update the post
-    const updatedPost = await updatePost(postId, title, description, image, video);
-
-    res.status(200).json({
-      message: 'Post updated successfully',
-      post: updatedPost,
-    });
-  } catch (error) {
-    res.status(400).json({ error: (error as Error).message });
-  }
-};
 
 // authController.ts
 export const handleDeletePost = async (req: AuthRequest, res: Response) => {

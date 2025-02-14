@@ -205,6 +205,9 @@ const createPost = async (
   userId: number,
   title: string,
   description: string,
+  detailedDescription?: string, // New field
+  amount?: number, // New field
+  remarks?: string, // New field
   image?: string, // Base64 encoded image
   video?: string // Base64 encoded video
 ) => {
@@ -224,6 +227,9 @@ const createPost = async (
         userId,
         title,
         description,
+        detailedDescription, // Include detailed description
+        amount, // Include amount
+        remarks, // Include remarks
         image, // Image is saved as base64 string
         video, // Video is saved as base64 string
       },
@@ -245,6 +251,9 @@ export const updatePost = async (
   postId: number,
   title: string,
   description: string,
+  detailedDescription?: string, // New field
+  amount?: number, // New field
+  remarks?: string, // New field
   image?: string, // Base64 encoded image
   video?: string // Base64 encoded video
 ) => {
@@ -254,6 +263,9 @@ export const updatePost = async (
       data: {
         title,
         description,
+        detailedDescription, // Include detailed description
+        amount, // Include amount
+        remarks, // Include remarks
         image, // Image is saved as base64 string
         video, // Video is saved as base64 string
       },
