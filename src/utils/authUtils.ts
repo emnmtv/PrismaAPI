@@ -205,11 +205,11 @@ const createPost = async (
   userId: number,
   title: string,
   description: string,
-  detailedDescription?: string, // New field
-  amount?: number, // New field
-  remarks?: string, // New field
-  image?: string, // Base64 encoded image
-  video?: string // Base64 encoded video
+  detailedDescription?: string,
+  amount?: string, // Accept amount as string from the frontend
+  remarks?: string,
+  image?: string,
+  video?: string
 ) => {
   try {
     // Check if the user has already created a post
@@ -221,17 +221,20 @@ const createPost = async (
       throw new Error('User already has a post. Only one post is allowed.');
     }
 
+    // Convert amount to Float
+    const amountAsFloat = amount ? parseFloat(amount) : null;
+
     // Create the new post if no existing post found
     const newPost = await prisma.post.create({
       data: {
         userId,
         title,
         description,
-        detailedDescription, // Include detailed description
-        amount, // Include amount
-        remarks, // Include remarks
-        image, // Image is saved as base64 string
-        video, // Video is saved as base64 string
+        detailedDescription,
+        amount: amountAsFloat, // Use the converted Float value
+        remarks,
+        image,
+        video,
       },
     });
 
@@ -244,7 +247,6 @@ const createPost = async (
     throw new Error('An unknown error occurred');
   }
 };
-
 
 // authUtils.ts
 export const updatePost = async (

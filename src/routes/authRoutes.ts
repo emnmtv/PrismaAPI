@@ -42,7 +42,7 @@ authRouter.post('/upgrade', authenticateToken,handleUpgradeToCreator);
 authRouter.post('/payment', handleInitiatePayment);
 authRouter.get('/cprofile', authenticateToken,handleGetCreatorProfile);
 authRouter.put('/editcprofile', authenticateToken,handleEditCreatorProfile);
-authRouter.put('/editpost', authenticateToken,handleEditPost);
+authRouter.put('/editpost', upload.fields([{ name: 'image' }, { name: 'video' }]),authenticateToken,handleEditPost);
 authRouter.put('/delete', authenticateToken,handleDeletePost);
 authRouter.post('/createpost', upload.fields([{ name: 'image' }, { name: 'video' }]),authenticateToken,handleCreatePost);
 authRouter.get('/viewuserpost',authenticateToken, handleGetUserWithProfileAndPosts);
