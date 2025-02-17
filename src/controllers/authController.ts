@@ -82,13 +82,25 @@ const handleEmailVerification = async (req: AuthRequest, res: Response) => {
 const handleLogin = async (req: AuthRequest, res: Response) => {
   const { email, password } = req.body;
   try {
-    // Get the token and user role after login
-    const token = await loginUser(email, password);
-
-    // Get the user object to retrieve the role
+    // First check if user exists and is unverified
     const user = await prisma.user.findUnique({ where: { email } });
 
-    if (!user) {
+    if (user && !user.verified) {
+      // Delete the unverified user
+      await prisma.user.delete({
+        where: { email }
+      });
+      
+      throw new Error('Your account was not verified and has been deleted. Please register again.');
+    }
+
+    // Proceed with normal login if user is verified
+    const token = await loginUser(email, password);
+
+    // Get the user object again (in case it was updated)
+    const verifiedUser = await prisma.user.findUnique({ where: { email } });
+
+    if (!verifiedUser) {
       throw new Error('User not found');
     }
 
@@ -96,10 +108,14 @@ const handleLogin = async (req: AuthRequest, res: Response) => {
     res.status(200).json({
       message: 'Login successful',
       token,
-      role: user.role, // Add the role to the response
+      role: verifiedUser.role,
     });
   } catch (error) {
-    res.status(400).json({ error: (error as Error).message });
+    // Return specific error message
+    res.status(400).json({ 
+      error: (error as Error).message,
+      isDeleted: (error as Error).message.includes('deleted')
+    });
   }
 };
 
