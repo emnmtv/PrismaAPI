@@ -17,11 +17,11 @@ import {
   handleGetUserWithProfileAndPosts2,
   handleGetAllPostsWithUserDetails,
   handleInitiatePayment,
-  
+
 
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
-
+import { sendMessage, getUsersWithChatHistory } from '../controllers/chatController';
 
 const authRouter = express.Router();
 
@@ -46,6 +46,6 @@ authRouter.put('/editpost', upload.fields([{ name: 'image' }, { name: 'video' }]
 authRouter.put('/delete', authenticateToken,handleDeletePost);
 authRouter.post('/createpost', upload.fields([{ name: 'image' }, { name: 'video' }]),authenticateToken,handleCreatePost);
 authRouter.get('/viewuserpost',authenticateToken, handleGetUserWithProfileAndPosts);
-
-
+authRouter.post('/sendmessage', authenticateToken, sendMessage);
+authRouter.get('/chat-users', authenticateToken, getUsersWithChatHistory);
 export { authRouter };

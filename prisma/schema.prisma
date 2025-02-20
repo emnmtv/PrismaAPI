@@ -1,5 +1,3 @@
-
-
 datasource db {
   provider = "mysql"
   url      = "mysql://root:@localhost:3306/prisma_db"
@@ -27,7 +25,9 @@ model User {
   payments         Payment[] // Add this inverse relation for payments
   creatorProfile   CreatorProfile?
   posts            Post[]   // Add this relation field for inverse relation
-   
+  sentMessages     Message[] @relation("SentMessages") // Add this relation
+  receivedMessages Message[] @relation("ReceivedMessages") // Add this relation
+ 
 }
 
 model CreatorProfile {
@@ -45,7 +45,6 @@ model CreatorProfile {
   user             User    @relation(fields: [userId], references: [id])
 }
 
-
 model Post {
   id                Int       @id @default(autoincrement())
   userId            Int
@@ -61,6 +60,7 @@ model Post {
 
   user              User      @relation(fields: [userId], references: [id])
 }
+
 model Payment {
   id               Int      @id @default(autoincrement())
   userId           Int
@@ -74,5 +74,16 @@ model Payment {
   updatedAt        DateTime @updatedAt
 
   user             User     @relation(fields: [userId], references: [id])
+}
+
+model Message {
+  id        Int      @id @default(autoincrement())
+  senderId  Int
+  receiverId Int
+  content   String
+  createdAt DateTime @default(now())
+
+  sender    User     @relation("SentMessages", fields: [senderId], references: [id])
+  receiver  User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
 }
 
