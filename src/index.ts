@@ -48,4 +48,5 @@ io.on('connection', (socket) => {
 // Start the server
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server is accessible on the network at http://192.168.0.104:${PORT}`); // Added log for network access
 });
