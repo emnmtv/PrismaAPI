@@ -30,14 +30,43 @@ app.use('/auth', authRouter);
 console.log("Serving static files from:", path.join(__dirname, '../uploads'));
 
 const server = http.createServer(app);
-const io = new Server(server);
 
-// Handle socket connections
+// Configure Socket.IO with CORS
+const io = new Server(server, {
+  cors: {
+    origin: ["http://localhost:8080", "http://192.168.0.104:8080"], // Add your Vue app URLs
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
+
 io.on('connection', (socket) => {
   console.log('A user connected');
 
+  socket.on('joinChat', (userId) => {
+    if (!userId) {
+      console.error('No userId provided for joinChat');
+      return;
+    }
+    
+    const roomId = userId.toString();
+    socket.join(roomId);
+    console.log(`User ${userId} joined their chat room ${roomId}`);
+  });
+
   socket.on('sendMessage', (data) => {
-    io.to(data.receiverId).emit('receiveMessage', data);
+    if (!data.receiverId || !data.senderId) {
+      console.error('Missing receiverId or senderId in message data');
+      return;
+    }
+
+    const receiverRoom = data.receiverId.toString();
+    const senderRoom = data.senderId.toString();
+    
+    console.log(`Sending message to rooms: ${receiverRoom} and ${senderRoom}`);
+    
+    io.to(receiverRoom).emit('receiveMessage', data);
+    io.to(senderRoom).emit('receiveMessage', data);
   });
 
   socket.on('disconnect', () => {

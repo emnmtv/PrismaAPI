@@ -86,7 +86,6 @@ const handleLogin = async (req: AuthRequest, res: Response) => {
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (user && !user.verified) {
-      // Delete the unverified user
       await prisma.user.delete({
         where: { email }
       });
@@ -104,14 +103,12 @@ const handleLogin = async (req: AuthRequest, res: Response) => {
       throw new Error('User not found');
     }
 
-    // Send the token and role in the response
     res.status(200).json({
       message: 'Login successful',
       token,
-      role: verifiedUser.role,
+      role: verifiedUser.role
     });
   } catch (error) {
-    // Return specific error message
     res.status(400).json({ 
       error: (error as Error).message,
       isDeleted: (error as Error).message.includes('deleted')
