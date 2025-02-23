@@ -35,9 +35,15 @@ model CreatorProfile {
   userId           Int     @unique
   offers           String  // e.g., "luthier, guitarist"
   bio              String?
+ genre              String?
   profession       String? // e.g., "Musician", "Producer", etc.
-  typeOfProfession String? // e.g., "Guitarist", "Drummer", etc.
-  genre            String? // e.g., "Rock", "Classical", etc.
+  typeOfProfession String? // Main category: "guitarist", "bassist", etc.
+  specialization   String? // Specific style/genre: "jazz", "classical", etc.
+  experience       Int?    // Years of experience
+  equipment        String? // List of equipment/instruments
+  portfolio        String? // Links to work samples
+  availability     String? // e.g., "weekends", "full-time"
+  ratePerHour     Float?  // Hourly rate if applicable
   earnings         Float   @default(0.0) // New field for creator earnings
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
