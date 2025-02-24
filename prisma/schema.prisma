@@ -63,7 +63,8 @@ model Post {
 model Payment {
   id               Int      @id @default(autoincrement())
   userId           Int
-  referenceNumber  String
+  clientId         Int
+  referenceNumber  String   @unique
   checkoutUrl      String
   amount           Int      // Store amount in the smallest unit (e.g., cents)
   description      String

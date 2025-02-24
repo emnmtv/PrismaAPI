@@ -5,6 +5,8 @@ import path from 'path';
 
 import http from 'http';
 import { Server } from 'socket.io';
+import './utils/paymentCleanup'; // Import the payment cleanup job
+import './utils/paymentStatusChecker'; // Import the payment status checker
 const app = express();
 const PORT = Number(process.env.PORT) || 3200;  // Ensuring it's a number
 

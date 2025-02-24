@@ -17,8 +17,7 @@ import {
   handleGetUserWithProfileAndPosts2,
   handleGetAllPostsWithUserDetails,
   handleInitiatePayment,
-
-
+  handleCheckPaymentStatus,
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
 import { sendMessage, fetchMessages, getUsersWithChatHistory } from '../controllers/chatController';
@@ -39,7 +38,7 @@ authRouter.get('/allpost', handleGetAllPostsWithUserDetails);
 authRouter.get('/profile', authenticateToken, handleGetProfile);
 authRouter.put('/profile', authenticateToken, handleUpdateProfile);
 authRouter.post('/upgrade', authenticateToken,handleUpgradeToCreator);
-authRouter.post('/payment', handleInitiatePayment);
+authRouter.post('/payment', authenticateToken,handleInitiatePayment);
 authRouter.get('/cprofile', authenticateToken,handleGetCreatorProfile);
 authRouter.put('/editcprofile', authenticateToken,handleEditCreatorProfile);
 authRouter.put('/editpost', upload.fields([{ name: 'image' }, { name: 'video' }]),authenticateToken,handleEditPost);
@@ -49,4 +48,5 @@ authRouter.get('/viewuserpost',authenticateToken, handleGetUserWithProfileAndPos
 authRouter.post('/sendmessage', authenticateToken, sendMessage);
 authRouter.get('/messages/:otherUserId', authenticateToken, fetchMessages);
 authRouter.get('/chat-users', authenticateToken, getUsersWithChatHistory);
+authRouter.get('/payment/status', authenticateToken, handleCheckPaymentStatus);
 export { authRouter };

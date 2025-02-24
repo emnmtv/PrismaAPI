@@ -13,12 +13,12 @@ import {
   updatePost,
   deletePost,
   createPaymentLink,
+
   
 
 
 } from '../utils/authUtils';
-
-
+import { checkPaymentStatus } from '../utils/paymentStatusChecker';
 // Handle User Registration
 // Handle User Registration
 const handleRegister = async (req: AuthRequest, res: Response) => {
@@ -78,7 +78,6 @@ const handleEmailVerification = async (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: (error as Error).message });
   }
 };
-
 
 // Handle User Login
 const handleLogin = async (req: AuthRequest, res: Response) => {
@@ -524,17 +523,33 @@ export const handleDeletePost = async (req: AuthRequest, res: Response) => {
 };
 
 // Controller function to initiate payment
-export const handleInitiatePayment = async (req: Request, res: Response): Promise<void> => {
-  const { amount, description, remarks } = req.body;
+export const handleInitiatePayment = async (req: AuthRequest, res: Response): Promise<void> => {
+  const { amount, description, remarks } = req.body; // Remove clientId from here
+  const clientId = req.body.clientId; // Get clientId from the request body (the user you are sending payment to)
+  const userId = req.user!.userId; // Get the userId of the authenticated user
 
-  if (!amount || !description || !remarks) {
+  if (!amount || !description || !remarks || !clientId) { // Check for required fields
     res.status(400).json({ error: 'Missing required fields' });
     return; // Ensure the function exits after sending the response
   }
 
   try {
     // Create the payment link using the utility function
-    const paymentLink = await createPaymentLink(amount, description, remarks);
+    const paymentLink = await createPaymentLink(amount, description, remarks, clientId); // Pass clientId
+
+    // Save payment details in the database
+    await prisma.payment.create({
+      data: {
+        userId: userId, // Set userId to the authenticated user's ID
+        clientId: clientId, // Add clientId to the payment data (the recipient)
+        referenceNumber: paymentLink.referenceNumber,
+        checkoutUrl: paymentLink.checkoutUrl,
+        amount: amount, // Store amount in the smallest unit (e.g., cents)
+        description: description,
+        remarks: remarks,
+        status: paymentLink.status,
+      },
+    });
 
     // Send response with payment link data
     res.status(200).json({
@@ -548,6 +563,37 @@ export const handleInitiatePayment = async (req: Request, res: Response): Promis
     res.status(500).json({ error: 'Failed to create payment link' });
   }
 };
+
+// Function to check payment status
+export const handleCheckPaymentStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  const { referenceNumber } = req.query; // Get reference number from query parameters
+
+  // Ensure referenceNumber is a string
+  if (typeof referenceNumber !== 'string') {
+    res.status(400).json({ error: 'Reference number is required and must be a string' });
+    return; // Ensure the function exits after sending the response
+  }
+
+  try {
+    const payment = await prisma.payment.findUnique({
+      where: { referenceNumber: referenceNumber },
+    });
+
+    if (!payment) {
+      res.status(404).json({ error: 'Payment not found' });
+      return; // Ensure the function exits after sending the response
+    }
+
+    // Here you can call the PayMongo API to check the status
+    const paymentStatus = await checkPaymentStatus(referenceNumber); // Call the function to check payment status
+
+    res.status(200).json({ status: paymentStatus });
+  } catch (error) {
+    console.error('Error checking payment status:', error);
+    res.status(500).json({ error: 'Failed to check payment status' });
+  }
+};
+
 export { 
   handleRegister, 
   handleLogin, 
