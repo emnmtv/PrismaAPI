@@ -22,11 +22,25 @@ const transporter = nodemailer.createTransport({
 
 // Function to send email
 const sendVerificationEmail = async (email: string, verificationCode: string) => {
+  const emailTemplate = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #2196f3;">Welcome to TuneUp!</h2>
+      <p>Thank you for registering. To complete your registration, please use the following verification code:</p>
+      <div style="background-color: #f5f7fb; padding: 15px; border-radius: 5px; text-align: center; margin: 20px 0;">
+        <h1 style="color: #1976d2; margin: 0; letter-spacing: 5px;">${verificationCode}</h1>
+      </div>
+      <p>This code will expire in 10 minutes.</p>
+      <p>If you didn't request this verification code, please ignore this email.</p>
+      <hr style="border: 1px solid #eee; margin: 20px 0;">
+      <p style="color: #666; font-size: 12px;">This is an automated message, please do not reply.</p>
+    </div>
+  `;
+
   const mailOptions = {
-    from: 'your-email@example.com', // Sender's email
-    to: email,                      // Recipient's email
-    subject: 'Your Verification Code',
-    text: `One Time Verification Code: ${verificationCode}`,
+    from: '202210258@gordoncollege.edu.ph',
+    to: email,
+    subject: 'Your TuneUp Verification Code',
+    html: emailTemplate,
   };
 
   await transporter.sendMail(mailOptions);
@@ -42,6 +56,57 @@ const registerUser = async (
   dateOfBirth?: Date,
   role: string = 'user'  // Default role is 'user'
 ) => {
+  // Check if user exists and is unverified
+  const existingUser = await prisma.user.findUnique({ 
+    where: { email },
+    include: {
+      creatorProfile: true,
+      posts: true,
+      receivedPayments: true,
+      madePayments: true,
+      sentMessages: true,
+      receivedMessages: true
+    }
+  });
+
+  if (existingUser && !existingUser.verified) {
+    // Delete all related records first
+    if (existingUser.creatorProfile) {
+      await prisma.creatorProfile.delete({
+        where: { userId: existingUser.id }
+      });
+    }
+    
+    if (existingUser.posts.length > 0) {
+      await prisma.post.deleteMany({
+        where: { userId: existingUser.id }
+      });
+    }
+    
+    await prisma.payment.deleteMany({
+      where: {
+        OR: [
+          { userId: existingUser.id },
+          { clientId: existingUser.id }
+        ]
+      }
+    });
+    
+    await prisma.message.deleteMany({
+      where: {
+        OR: [
+          { senderId: existingUser.id },
+          { receiverId: existingUser.id }
+        ]
+      }
+    });
+
+    // Finally delete the user
+    await prisma.user.delete({
+      where: { id: existingUser.id }
+    });
+  }
+
   const hashedPassword = await bcrypt.hash(password, 10);
   const verificationCode = generateVerificationCode();
 
@@ -55,8 +120,8 @@ const registerUser = async (
       address,
       dateOfBirth,
       verificationCode,
-      verified: false, // User is initially unverified
-      role,            // Assign the provided role
+      verified: false,
+      role,
     },
   });
 

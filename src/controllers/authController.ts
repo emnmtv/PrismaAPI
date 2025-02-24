@@ -18,6 +18,7 @@ import {
 
 } from '../utils/authUtils';
 
+
 // Handle User Registration
 // Handle User Registration
 const handleRegister = async (req: AuthRequest, res: Response) => {
@@ -77,6 +78,7 @@ const handleEmailVerification = async (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: (error as Error).message });
   }
 };
+
 
 // Handle User Login
 const handleLogin = async (req: AuthRequest, res: Response) => {
