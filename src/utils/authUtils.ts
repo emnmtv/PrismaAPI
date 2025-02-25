@@ -342,7 +342,7 @@ export const checkPaymentStatus = async (referenceNumber: string) => {
     url: `https://api.paymongo.com/v1/links?reference_number=${referenceNumber}`,
     headers: {
       accept: 'application/json',
-      authorization: 'Basic c2tfdGVzdF93b3Q5YXA4RVNFQnpmM1JVQjdtN3pQUnI6', // Replace with your actual API key
+      authorization: 'Basic sk_test_wot9ap8ESEBzf3RUB7m7zPRr', // Replace with your actual API key
     },
   };
 
