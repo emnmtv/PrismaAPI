@@ -3,13 +3,18 @@ import axios from 'axios';
 import cron from 'node-cron';
 
 // Function to check payment status
-export const checkPaymentStatus = async (referenceNumber: string) => {
+const checkallPaymentStatus = async (referenceNumber: string) => {
+  console.log(`Checking payment status for reference number: ${referenceNumber}`);
+
+  const apiKey = 'sk_test_wot9ap8ESEBzf3RUB7m7zPRr'; // Your actual API key
+  const encodedCredentials = Buffer.from(`${apiKey}:`).toString('base64'); // Encode credentials
+
   const options = {
     method: 'GET',
     url: `https://api.paymongo.com/v1/links?reference_number=${referenceNumber}`,
     headers: {
       accept: 'application/json',
-      authorization: 'Basic sk_test_wot9ap8ESEBzf3RUB7m7zPRr', // Replace with your actual API key
+      authorization: `Basic ${encodedCredentials}`, // Use the encoded credentials
     },
   };
 
@@ -18,25 +23,31 @@ export const checkPaymentStatus = async (referenceNumber: string) => {
     console.log('API Response:', response.data); // Log the full response
     const paymentData = response.data.data;
 
-    // Check the payment status
-    const status = paymentData.attributes.status;
+    // Check if paymentData is an array and has at least one element
+    if (Array.isArray(paymentData) && paymentData.length > 0) {
+      // Check the payment status
+      const status = paymentData[0].attributes.status; // Access the first element's attributes
+      console.log(`Payment status retrieved: ${status}`);
 
-    // Update the payment record in the database
-    const updateResult = await prisma.payment.updateMany({
-      where: {
-        referenceNumber: referenceNumber,
-      },
-      data: {
-        status: status, // Update the status based on the API response
-      },
-    });
+      // Update the payment record in the database
+      const updateResult = await prisma.payment.updateMany({
+        where: {
+          referenceNumber: referenceNumber,
+        },
+        data: {
+          status: status, // Update the status based on the API response
+        },
+      });
 
-    console.log(`Update Result:`, updateResult); // Log the update result
+      console.log(`Update Result:`, updateResult); // Log the update result
 
-    if (updateResult.count > 0) {
-      console.log(`Payment status for ${referenceNumber} updated to ${status}.`);
+      if (updateResult.count > 0) {
+        console.log(`Payment status for ${referenceNumber} updated to ${status}.`);
+      } else {
+        console.log(`No payment found with reference number: ${referenceNumber}`);
+      }
     } else {
-      console.log(`No payment found with reference number: ${referenceNumber}`);
+      console.log(`No payment data found for reference number: ${referenceNumber}`);
     }
   } catch (error) {
     console.error('Error checking payment status:', error);
@@ -55,7 +66,7 @@ cron.schedule('0 * * * *', async () => {
 
     // Check the status for each unpaid payment
     for (const payment of unpaidPayments) {
-      await checkPaymentStatus(payment.referenceNumber);
+      await checkallPaymentStatus(payment.referenceNumber);
     }
   } catch (error) {
     console.error('Error checking payment statuses:', error);

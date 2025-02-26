@@ -22,12 +22,12 @@ model User {
   role             String   @default("user") // user, creator, admin
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-  payments         Payment[] // Add this inverse relation for payments
+  payments         Payment[] @relation("UserPayments") // Add this inverse relation for payments
+  clientPayments   Payment[] @relation("ClientPayments") // New relation for payments where user is a client
   creatorProfile   CreatorProfile?
   posts            Post[]   // Add this relation field for inverse relation
   sentMessages     Message[] @relation("SentMessages") // Add this relation
   receivedMessages Message[] @relation("ReceivedMessages") // Add this relation
- 
 }
 
 model CreatorProfile {
@@ -70,10 +70,12 @@ model Payment {
   description      String
   remarks          String?  // Add remarks field
   status           String   // Store the status of the payment (e.g., "unpaid", "paid")
+  orderStatus      String   @default("pending") // New field for order status
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  user             User     @relation(fields: [userId], references: [id])
+  user             User     @relation("UserPayments", fields: [userId], references: [id]) // Relation to User
+  client           User     @relation("ClientPayments", fields: [clientId], references: [id]) // Relation to User
 }
 
 model Message {

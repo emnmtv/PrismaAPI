@@ -13,12 +13,12 @@ import {
   updatePost,
   deletePost,
   createPaymentLink,
-
-  
-
-
+  fetchPaymentsForUser,
+  updateOrderStatus,
+  fetchPaymentsForClient,
+  updateOrderStatusForClient,
 } from '../utils/authUtils';
-import { checkPaymentStatus } from '../utils/paymentStatusChecker';
+import { checkPaymentStatus } from '../utils/authUtils';
 // Handle User Registration
 // Handle User Registration
 const handleRegister = async (req: AuthRequest, res: Response) => {
@@ -340,13 +340,13 @@ export const handleGetUserWithProfileAndPosts = async (
       return;
     }
 
-    // Convert file paths to full URLs
+    // Remove URL construction for image and video
     const userWithMedia = {
       ...user,
       posts: user.posts.map(post => ({
         ...post,
-        image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
-        video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
+        // image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
+        // video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
       })),
     };
 
@@ -382,13 +382,13 @@ export const handleGetUserWithProfileAndPosts2 = async (req: Request, res: Respo
       return;
     }
 
-    // Convert file paths to full URLs
+    // Remove URL construction for image and video
     const userWithMedia = {
       ...user,
       posts: user.posts.map(post => ({
         ...post,
-        image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
-        video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
+        // image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
+        // video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
       })),
     };
 
@@ -427,11 +427,9 @@ export const handleGetPostWithUserDetails = async (req: Request, res: Response):
       return;
     }
 
-    // Convert file paths to full URLs
+    // Remove URL construction for image and video
     const postWithUserDetails = {
       ...post,
-      image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
-      video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
       user: {
         ...post.user,
         creatorProfile: post.user.creatorProfile ? {
@@ -468,11 +466,9 @@ export const handleGetAllPostsWithUserDetails = async (req: Request, res: Respon
       return;
     }
 
-    // Map through all posts and convert file paths to full URLs
+    // Remove URL construction for image and video
     const postsWithUserDetails = posts.map((post) => ({
       ...post,
-      image: post.image ? `http://localhost:3200/uploads/${post.image}` : null,
-      video: post.video ? `http://localhost:3200/uploads/${post.video}` : null,
       user: {
         ...post.user,
         creatorProfile: post.user.creatorProfile ? {
@@ -564,6 +560,19 @@ export const handleInitiatePayment = async (req: AuthRequest, res: Response): Pr
   }
 };
 
+// Function to create a delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Function to log the current time every minute
+const startClock = () => {
+  const interval = setInterval(() => {
+    const now = new Date();
+    console.log(`Current Time: ${now.toLocaleTimeString()}`);
+  }, 60000); // Log every minute
+
+  return interval; // Return the interval ID to clear it later
+};
+
 // Function to check payment status
 export const handleCheckPaymentStatus = async (req: AuthRequest, res: Response): Promise<void> => {
   const { referenceNumber } = req.query; // Get reference number from query parameters
@@ -574,23 +583,88 @@ export const handleCheckPaymentStatus = async (req: AuthRequest, res: Response):
     return; // Ensure the function exits after sending the response
   }
 
+  const clockInterval = startClock(); // Start the clock
+
   try {
     const payment = await prisma.payment.findUnique({
       where: { referenceNumber: referenceNumber },
     });
 
     if (!payment) {
+      clearInterval(clockInterval); // Clear the clock if payment not found
       res.status(404).json({ error: 'Payment not found' });
       return; // Ensure the function exits after sending the response
     }
 
+    // Introduce a delay of 5 minutes (300,000 milliseconds)
+    await delay(300000); // 5 minutes delay
+
+    // Clear the clock after the delay
+    clearInterval(clockInterval);
+
     // Here you can call the PayMongo API to check the status
     const paymentStatus = await checkPaymentStatus(referenceNumber); // Call the function to check payment status
 
+    // Update the payment status in the database
+    await prisma.payment.update({
+      where: { referenceNumber: referenceNumber },
+      data: { status: paymentStatus }, // Update the status field
+    });
+
     res.status(200).json({ status: paymentStatus });
   } catch (error) {
+    clearInterval(clockInterval); // Clear the clock on error
     console.error('Error checking payment status:', error);
     res.status(500).json({ error: 'Failed to check payment status' });
+  }
+};
+
+// Handle fetching payments for the authenticated user
+const handleFetchPayments = async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.userId; // Get the authenticated user's ID
+
+  try {
+    const payments = await fetchPaymentsForUser(userId);
+    res.status(200).json({ message: 'Payments fetched successfully', payments });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+};
+
+// Handle updating the order status of a payment
+const handleUpdateOrderStatus = async (req: AuthRequest, res: Response) => {
+  const { referenceNumber, newStatus } = req.body; // Get reference number and new status from request body
+
+  try {
+    const updatedPayment = await updateOrderStatus(referenceNumber, newStatus);
+    res.status(200).json({ message: 'Order status updated successfully', updatedPayment });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Handle fetching payments for a client
+const handleFetchPaymentsForClient = async (req: AuthRequest, res: Response) => {
+  const clientId = req.user!.userId; // Assuming the clientId is the authenticated user's ID
+
+  try {
+    const payments = await fetchPaymentsForClient(clientId);
+    res.status(200).json({ message: 'Payments fetched successfully', payments });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+};
+
+// Handle updating the order status of a payment from the client side
+const handleUpdateOrderStatusForClient = async (req: AuthRequest, res: Response) => {
+  const clientId = req.user!.userId; // Get the authenticated user's ID
+  const { referenceNumber, newStatus } = req.body; // Get reference number and new status from request body
+
+  try {
+    const updatedPayment = await updateOrderStatusForClient(clientId, referenceNumber, newStatus);
+    res.status(200).json({ message: 'Order status updated successfully', updatedPayment });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
   }
 };
 
@@ -604,5 +678,8 @@ export {
   handleGetCreatorProfile,
   handleEditCreatorProfile,
   handleCreatePost,
-
+  handleFetchPayments,
+  handleUpdateOrderStatus,
+  handleFetchPaymentsForClient,
+  handleUpdateOrderStatusForClient,
 };

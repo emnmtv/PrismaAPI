@@ -18,6 +18,10 @@ import {
   handleGetAllPostsWithUserDetails,
   handleInitiatePayment,
   handleCheckPaymentStatus,
+  handleFetchPayments,
+  handleUpdateOrderStatus,
+  handleFetchPaymentsForClient,
+  handleUpdateOrderStatusForClient,
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
 import { sendMessage, fetchMessages, getUsersWithChatHistory } from '../controllers/chatController';
@@ -49,4 +53,8 @@ authRouter.post('/sendmessage', authenticateToken, sendMessage);
 authRouter.get('/messages/:otherUserId', authenticateToken, fetchMessages);
 authRouter.get('/chat-users', authenticateToken, getUsersWithChatHistory);
 authRouter.get('/payment/status', authenticateToken, handleCheckPaymentStatus);
+authRouter.get('/payments', authenticateToken, handleFetchPayments);
+authRouter.put('/payment/status', authenticateToken, handleUpdateOrderStatus);
+authRouter.get('/client/payments', authenticateToken, handleFetchPaymentsForClient);
+authRouter.put('/client/payment/status', authenticateToken, handleUpdateOrderStatusForClient);
 export { authRouter };

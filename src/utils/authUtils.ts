@@ -296,7 +296,7 @@ const apiKey = 'sk_test_wot9ap8ESEBzf3RUB7m7zPRr';
 const base64ApiKey = Buffer.from(apiKey + ':').toString('base64');
 
 // Function to create a payment link
-export const createPaymentLink = async (amount: number, description: string, remarks: string, clientId: string) => {
+export const createPaymentLink = async (amount: number, description: string, remarks: string, clientId: string): Promise<{ checkoutUrl: string; referenceNumber: string; status: string; }> => {
   try {
     const response = await axios.post(
       PAYMONGO_API_URL,
@@ -319,6 +319,9 @@ export const createPaymentLink = async (amount: number, description: string, rem
       }
     );
 
+    // Log the response
+    console.log('Payment link response:', response.data);
+
     // Extract relevant data from the response
     const { data } = response.data;
     const paymentLink = {
@@ -329,7 +332,7 @@ export const createPaymentLink = async (amount: number, description: string, rem
 
     // Return the payment link details
     return paymentLink;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating payment link:', error);
     throw new Error('Failed to create payment link');
   }
@@ -337,25 +340,102 @@ export const createPaymentLink = async (amount: number, description: string, rem
 
 // Add this function to check payment status
 export const checkPaymentStatus = async (referenceNumber: string) => {
+  const apiKey = 'sk_test_wot9ap8ESEBzf3RUB7m7zPRr'; // Ensure this is your correct API key
+  const base64ApiKey = Buffer.from(apiKey + ':').toString('base64'); // Ensure correct Base64 encoding
+
   const options = {
     method: 'GET',
     url: `https://api.paymongo.com/v1/links?reference_number=${referenceNumber}`,
     headers: {
       accept: 'application/json',
-      authorization: 'Basic sk_test_wot9ap8ESEBzf3RUB7m7zPRr', // Replace with your actual API key
+      authorization: `Basic ${base64ApiKey}`, // Use the Base64-encoded API key
     },
   };
 
   try {
     const response = await axios.request(options);
+    console.log('API Response:', response.data); // Log the entire response
+
+    // Check if the response contains an error
+    if (response.data.errors) {
+      throw new Error(`PayMongo API Error: ${JSON.stringify(response.data.errors)}`);
+    }
+
     const paymentData = response.data.data;
 
+    // Check if paymentData is an array and has at least one element
+    if (!Array.isArray(paymentData) || paymentData.length === 0) {
+      throw new Error('No payment data found in the response');
+    }
+
+    // Access the first element of the array
+    const attributes = paymentData[0].attributes;
+
+    // Log the attributes object to see its contents
+    console.log('Attributes:', attributes); // Log the attributes object
+
+    // Check if attributes exist
+    if (!attributes) {
+      throw new Error('Invalid response structure from PayMongo API');
+    }
+
     // Return the payment status
-    return paymentData.attributes.status;
+    return attributes.status; // Ensure that 'status' exists in attributes
   } catch (error) {
     console.error('Error checking payment status:', error);
     throw new Error('Failed to check payment status');
   }
+};
+
+// Function to fetch payments for a user
+export const fetchPaymentsForUser = async (userId: number) => {
+  const payments = await prisma.payment.findMany({
+    where: {
+      userId: userId, // Fetch payments for the authenticated user
+    },
+    include: {
+      client: true, // Include client details
+    },
+  });
+
+  return payments;
+};
+
+// Function to update the order status of a payment
+export const updateOrderStatus = async (referenceNumber: string, newStatus: string) => {
+  const updatedPayment = await prisma.payment.update({
+    where: { referenceNumber: referenceNumber },
+    data: { orderStatus: newStatus }, // Update the order status
+  });
+
+  return updatedPayment;
+};
+
+// Function to fetch payments for a client
+export const fetchPaymentsForClient = async (clientId: number) => {
+  const payments = await prisma.payment.findMany({
+    where: {
+      clientId: clientId, // Fetch payments for the specified client
+    },
+    include: {
+      user: true, // Include user details if needed
+    },
+  });
+
+  return payments;
+};
+
+// Function to update the order status of a payment from the client side
+export const updateOrderStatusForClient = async (clientId: number, referenceNumber: string, newStatus: string) => {
+  const updatedPayment = await prisma.payment.updateMany({
+    where: {
+      clientId: clientId,
+      referenceNumber: referenceNumber,
+    },
+    data: { orderStatus: newStatus }, // Update the order status
+  });
+
+  return updatedPayment;
 };
 
 export { registerUser, 
