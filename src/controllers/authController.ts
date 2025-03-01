@@ -19,6 +19,9 @@ import {
   updateOrderStatusForClient,
   rateCreator,
   getCreatorRatings,
+  updatePostStatus,
+  deletePostAdmin,
+  fetchAllUsers,
 } from '../utils/authUtils';
 import { checkPaymentStatus } from '../utils/authUtils';
 // Handle User Registration
@@ -698,6 +701,105 @@ export const handleGetCreatorRatings = async (req: AuthRequest, res: Response) =
   }
 };
 
+// Handle post approval/rejection
+export const handleUpdatePostStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const adminId = req.user!.userId;
+    const { postId, status } = req.body;
+
+    if (!postId || !status) {
+      res.status(400).json({ error: 'Post ID and status are required' });
+      return;
+    }
+
+    if (!['approved', 'rejected'].includes(status)) {
+      res.status(400).json({ error: 'Invalid status. Must be "approved" or "rejected"' });
+      return;
+    }
+
+    const updatedPost = await updatePostStatus(Number(postId), status, adminId);
+    res.status(200).json({ 
+      message: `Post ${status} successfully`,
+      post: updatedPost 
+    });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Handle post deletion by admin
+export const handleDeletePostAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const adminId = req.user!.userId;
+    const { postId } = req.body;
+
+    if (!postId) {
+      res.status(400).json({ error: 'Post ID is required' });
+      return;
+    }
+
+    await deletePostAdmin(Number(postId), adminId);
+    res.status(200).json({ message: 'Post deleted successfully' });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Add this handler for admin posts
+export const handleGetAdminPosts = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    // Verify admin role
+    const admin = await prisma.user.findUnique({
+      where: { id: req.user!.userId }
+    });
+
+    if (!admin || admin.role !== 'admin') {
+      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
+      return;
+    }
+
+    // Fetch all posts including rejected ones
+    const posts = await prisma.post.findMany({
+      include: {
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+            email: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    res.status(200).json(posts);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Handle fetching all users (admin only)
+export const handleGetAllUsers = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    // Verify admin role
+    const admin = await prisma.user.findUnique({
+      where: { id: req.user!.userId }
+    });
+
+    if (!admin || admin.role !== 'admin') {
+      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
+      return;
+    }
+
+    const users = await fetchAllUsers();
+    res.status(200).json(users);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
 export { 
   handleRegister, 
   handleLogin, 
@@ -712,4 +814,5 @@ export {
   handleUpdateOrderStatus,
   handleFetchPaymentsForClient,
   handleUpdateOrderStatusForClient,
+
 };

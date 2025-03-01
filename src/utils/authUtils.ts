@@ -572,6 +572,100 @@ export const getCreatorRatings = async (userId: number) => {
   }
 };
 
+// Function to approve/reject post
+export const updatePostStatus = async (postId: number, status: string, adminId: number) => {
+  try {
+    // Verify admin role
+    const admin = await prisma.user.findUnique({
+      where: { id: adminId }
+    });
+
+    if (!admin || admin.role !== 'admin') {
+      throw new Error('Unauthorized: Only admins can perform this action');
+    }
+
+    return await prisma.post.update({
+      where: { id: postId },
+      data: { 
+        status: status,
+        updatedAt: new Date()
+      },
+      include: {
+        user: {
+          select: {
+            email: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      }
+    });
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to update post status: ${error.message}`);
+    }
+    throw new Error('Failed to update post status: Unknown error occurred');
+  }
+};
+
+// Function to delete post (admin only)
+export const deletePostAdmin = async (postId: number, adminId: number) => {
+  try {
+    // Verify admin role
+    const admin = await prisma.user.findUnique({
+      where: { id: adminId }
+    });
+
+    if (!admin || admin.role !== 'admin') {
+      throw new Error('Unauthorized: Only admins can perform this action');
+    }
+
+    return await prisma.post.delete({
+      where: { id: postId }
+    });
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to delete post: ${error.message}`);
+    }
+    throw new Error('Failed to delete post: Unknown error occurred');
+  }
+};
+
+// Function to fetch all users
+export const fetchAllUsers = async () => {
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phoneNumber: true,
+        address: true,
+        dateOfBirth: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+        creatorProfile: true, // Include creator profile if exists
+        _count: {
+          select: {
+            posts: true, // Count of posts
+            payments: true, // Count of payments
+            clientPayments: true // Count of client payments
+          }
+        }
+      }
+    });
+
+    return users;
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to fetch users: ${error.message}`);
+    }
+    throw new Error('Failed to fetch users: Unknown error occurred');
+  }
+};
+
 export { registerUser, 
   loginUser, fetchProfile, 
   updateUserProfile, prisma, 

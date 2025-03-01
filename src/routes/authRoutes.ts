@@ -24,6 +24,10 @@ import {
   handleUpdateOrderStatusForClient,
   handleSubmitRating,
   handleGetCreatorRatings,
+  handleUpdatePostStatus,
+  handleDeletePostAdmin,
+  handleGetAdminPosts,
+  handleGetAllUsers,
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
 import { sendMessage, fetchMessages, getUsersWithChatHistory } from '../controllers/chatController';
@@ -61,4 +65,10 @@ authRouter.get('/client/payments', authenticateToken, handleFetchPaymentsForClie
 authRouter.put('/client/payment/status', authenticateToken, handleUpdateOrderStatusForClient);
 authRouter.post('/rate', authenticateToken, handleSubmitRating);
 authRouter.get('/ratings', authenticateToken, handleGetCreatorRatings);
+
+// Admin routes
+authRouter.put('/post/status', authenticateToken, handleUpdatePostStatus);
+authRouter.delete('/post/admin', authenticateToken, handleDeletePostAdmin);
+authRouter.get('/admin/posts', authenticateToken, handleGetAdminPosts);
+authRouter.get('/admin/users', authenticateToken, handleGetAllUsers);
 export { authRouter };
