@@ -22,6 +22,8 @@ import {
   handleUpdateOrderStatus,
   handleFetchPaymentsForClient,
   handleUpdateOrderStatusForClient,
+  handleSubmitRating,
+  handleGetCreatorRatings,
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
 import { sendMessage, fetchMessages, getUsersWithChatHistory } from '../controllers/chatController';
@@ -57,4 +59,6 @@ authRouter.get('/payments', authenticateToken, handleFetchPayments);
 authRouter.put('/payment/status', authenticateToken, handleUpdateOrderStatus);
 authRouter.get('/client/payments', authenticateToken, handleFetchPaymentsForClient);
 authRouter.put('/client/payment/status', authenticateToken, handleUpdateOrderStatusForClient);
+authRouter.post('/rate', authenticateToken, handleSubmitRating);
+authRouter.get('/ratings', authenticateToken, handleGetCreatorRatings);
 export { authRouter };

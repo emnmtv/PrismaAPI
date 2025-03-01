@@ -28,6 +28,8 @@ model User {
   posts            Post[]   // Add this relation field for inverse relation
   sentMessages     Message[] @relation("SentMessages") // Add this relation
   receivedMessages Message[] @relation("ReceivedMessages") // Add this relation
+  receivedRatings  Rating[] @relation("ReceivedRatings")
+  givenRatings     Rating[] @relation("GivenRatings")
 }
 
 model CreatorProfile {
@@ -49,11 +51,11 @@ model Post {
   userId            Int
   title             String
   description       String
-  detailedDescription String?  // New field for detailed description
-  amount            Float?    // New field for amount
-  remarks           String?   // New field for remarks
-  image             String?   // Base64 encoded image
-  video             String?   // Base64 encoded video
+  detailedDescription String?  
+  amount            Float?    
+  remarks           String?   
+  image             String?   
+  video             String?   
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -73,6 +75,7 @@ model Payment {
   orderStatus      String   @default("pending") // New field for order status
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  rating           Rating?
 
   user             User     @relation("UserPayments", fields: [userId], references: [id]) // Relation to User
   client           User     @relation("ClientPayments", fields: [clientId], references: [id]) // Relation to User
@@ -87,5 +90,20 @@ model Message {
 
   sender    User     @relation("SentMessages", fields: [senderId], references: [id])
   receiver  User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+}
+
+model Rating {
+  id          Int      @id @default(autoincrement())
+  userId      Int      // Creator/Seller being rated
+  clientId    Int      // Client who gave the rating
+  paymentId   Int      @unique // Associated payment/order
+  rating      Float    // Rating value (e.g., 1-5)
+  review      String?  // Optional review text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation("ReceivedRatings", fields: [userId], references: [id])
+  client      User     @relation("GivenRatings", fields: [clientId], references: [id])
+  payment     Payment  @relation(fields: [paymentId], references: [id])
 }
 

@@ -438,6 +438,140 @@ export const updateOrderStatusForClient = async (clientId: number, referenceNumb
   return updatedPayment;
 };
 
+// Function to create or update a rating
+export const rateCreator = async (
+  clientId: number,
+  userId: number,
+  paymentId: number,
+  rating: number,
+  review?: string
+) => {
+  try {
+    // Validate rating value
+    if (rating < 1 || rating > 5) {
+      throw new Error('Rating must be between 1 and 5');
+    }
+
+    // Check if payment exists and belongs to the client
+    const payment = await prisma.payment.findFirst({
+      where: {
+        id: paymentId,
+        clientId: clientId,
+        userId: userId,
+        status: 'paid',
+        orderStatus: 'completed'
+      }
+    });
+
+    if (!payment) {
+      throw new Error('Payment not found or not eligible for rating');
+    }
+
+    // Create or update rating
+    const ratingRecord = await prisma.rating.upsert({
+      where: {
+        paymentId: paymentId
+      },
+      update: {
+        rating: rating,
+        review: review,
+        updatedAt: new Date()
+      },
+      create: {
+        userId: userId,
+        clientId: clientId,
+        paymentId: paymentId,
+        rating: rating,
+        review: review
+      }
+    });
+
+    // Calculate and update creator's average rating
+    const averageRating = await prisma.rating.aggregate({
+      where: {
+        userId: userId
+      },
+      _avg: {
+        rating: true
+      }
+    });
+
+    return {
+      rating: ratingRecord,
+      averageRating: averageRating._avg.rating
+    };
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to submit rating: ${error.message}`);
+    }
+    throw new Error('Failed to submit rating: Unknown error occurred');
+  }
+};
+
+// Function to get creator's ratings
+export const getCreatorRatings = async (userId: number) => {
+  try {
+    // Validate userId
+    if (!userId || typeof userId !== 'number') {
+      throw new Error('Invalid userId provided');
+    }
+
+    // Get all ratings for the creator
+    const ratings = await prisma.rating.findMany({
+      where: {
+        userId: {
+          equals: userId // Specify the equals operator explicitly
+        }
+      },
+      include: {
+        client: {
+          select: {
+            firstName: true,
+            lastName: true
+          }
+        },
+        payment: {
+          select: {
+            description: true,
+            amount: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    // Get aggregated stats
+    const stats = await prisma.rating.aggregate({
+      where: {
+        userId: {
+          equals: userId
+        }
+      },
+      _avg: {
+        rating: true
+      },
+      _count: {
+        _all: true // Count all ratings
+      }
+    });
+
+    return {
+      ratings,
+      stats: {
+        average: stats._avg.rating || 0,
+        total: stats._count._all || 0
+      }
+    };
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to fetch ratings: ${error.message}`);
+    }
+    throw new Error('Failed to fetch ratings: Unknown error occurred');
+  }
+};
+
 export { registerUser, 
   loginUser, fetchProfile, 
   updateUserProfile, prisma, 

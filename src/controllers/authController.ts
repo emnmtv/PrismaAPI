@@ -17,6 +17,8 @@ import {
   updateOrderStatus,
   fetchPaymentsForClient,
   updateOrderStatusForClient,
+  rateCreator,
+  getCreatorRatings,
 } from '../utils/authUtils';
 import { checkPaymentStatus } from '../utils/authUtils';
 // Handle User Registration
@@ -663,6 +665,34 @@ const handleUpdateOrderStatusForClient = async (req: AuthRequest, res: Response)
   try {
     const updatedPayment = await updateOrderStatusForClient(clientId, referenceNumber, newStatus);
     res.status(200).json({ message: 'Order status updated successfully', updatedPayment });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+export const handleSubmitRating = async (req: AuthRequest, res: Response) => {
+  const clientId = req.user!.userId;
+  const { userId, paymentId, rating, review } = req.body;
+
+  try {
+    const result = await rateCreator(
+      clientId,
+      userId,
+      paymentId,
+      rating,
+      review
+    );
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+export const handleGetCreatorRatings = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId; // Get userId from token
+    const ratings = await getCreatorRatings(userId);
+    res.status(200).json(ratings);
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }
