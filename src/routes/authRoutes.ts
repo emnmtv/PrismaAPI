@@ -46,7 +46,10 @@ authRouter.get('/allpost', handleGetAllPostsWithUserDetails);
 
 // Protected routes
 authRouter.get('/profile', authenticateToken, handleGetProfile);
-authRouter.put('/profile', authenticateToken, handleUpdateProfile);
+authRouter.put('/profile', authenticateToken, upload.fields([
+  { name: 'profilePicture', maxCount: 1 },
+  { name: 'coverPhoto', maxCount: 1 }
+]), handleUpdateProfile);
 authRouter.post('/upgrade', authenticateToken,handleUpgradeToCreator);
 authRouter.post('/payment', authenticateToken,handleInitiatePayment);
 authRouter.get('/cprofile', authenticateToken,handleGetCreatorProfile);

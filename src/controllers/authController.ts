@@ -128,7 +128,14 @@ const handleGetProfile = async (req: AuthRequest, res: Response) => {
   const userId = req.user!.userId;
   try {
     const userProfile = await fetchProfile(userId);
-    res.status(200).json({ message: 'Profile fetched successfully', userProfile });
+    res.status(200).json({
+      message: 'Profile fetched successfully',
+      userProfile: {
+        ...userProfile,
+        profilePicture: userProfile.profilePicture ? `/uploads/${userProfile.profilePicture}` : null,
+        coverPhoto: userProfile.coverPhoto ? `/uploads/${userProfile.coverPhoto}` : null,
+      }
+    });
   } catch (error) {
     res.status(404).json({ error: (error as Error).message });
   }
@@ -137,18 +144,40 @@ const handleGetProfile = async (req: AuthRequest, res: Response) => {
 // Handle Updating User Profile
 const handleUpdateProfile = async (req: AuthRequest, res: Response) => {
   const userId = req.user!.userId;
-  const { firstName, lastName, phoneNumber, address, dateOfBirth } = req.body;
-
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+  
   try {
+    const {
+      firstName,
+      lastName,
+      phoneNumber,
+      address,
+      dateOfBirth
+    } = req.body;
+
+    // Handle file uploads
+    const profilePicture = files?.profilePicture?.[0]?.filename;
+    const coverPhoto = files?.coverPhoto?.[0]?.filename;
+
     const updatedUser = await updateUserProfile(
       userId,
       firstName,
       lastName,
       phoneNumber,
       address,
-      dateOfBirth ? new Date(dateOfBirth) : undefined
+      dateOfBirth ? new Date(dateOfBirth) : undefined,
+      profilePicture || undefined,  // Only update if new file uploaded
+      coverPhoto || undefined       // Only update if new file uploaded
     );
-    res.status(200).json({ message: 'Profile updated successfully', updatedUser });
+
+    res.status(200).json({
+      message: 'Profile updated successfully',
+      user: {
+        ...updatedUser,
+        profilePicture: updatedUser.profilePicture ? `/uploads/${updatedUser.profilePicture}` : null,
+        coverPhoto: updatedUser.coverPhoto ? `/uploads/${updatedUser.coverPhoto}` : null,
+      }
+    });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }

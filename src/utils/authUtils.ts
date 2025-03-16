@@ -99,7 +99,9 @@ const fetchProfile = async (userId: number) => {
       phoneNumber: true,
       address: true,
       dateOfBirth: true,
-      role: true,    // Include the role
+      role: true,
+      profilePicture: true,
+      coverPhoto: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -109,6 +111,7 @@ const fetchProfile = async (userId: number) => {
     throw new Error('User not found');
   }
 
+  // Return the raw data without modifying paths
   return user;
 };
 
@@ -119,7 +122,9 @@ const updateUserProfile = async (
   lastName?: string,
   phoneNumber?: string,
   address?: string,
-  dateOfBirth?: Date
+  dateOfBirth?: Date,
+  profilePicture?: string,  // This will be the filename
+  coverPhoto?: string       // This will be the filename
 ) => {
   const updatedUser = await prisma.user.update({
     where: { id: userId },
@@ -129,8 +134,12 @@ const updateUserProfile = async (
       phoneNumber,
       address,
       dateOfBirth,
+      profilePicture,
+      coverPhoto,
     },
   });
+
+  // Return the raw data
   return updatedUser;
 };
 

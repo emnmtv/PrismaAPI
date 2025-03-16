@@ -23,12 +23,18 @@ app.use(
 // Increase the body parser size limit to handle large payloads (e.g., 10MB)
 app.use(express.json({ limit: '300mb' })); // JSON payloads (increase to 10MB or more if needed)
 app.use(express.urlencoded({ limit: '300mb', extended: true })); // URL-encoded payloads (if applicable)
-// Serve static files from the "uploads" folder
-app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
+
+// Log the absolute path of the uploads directory
+const uploadsPath = path.join(__dirname, '../uploads');
+console.log('Uploads directory absolute path:', uploadsPath);
+
+// Serve static files from the uploads directory
+app.use('/uploads', express.static(uploadsPath));
 
 app.use(express.json());
 app.use('/auth', authRouter);
 
+// Log the uploads directory path for debugging
 console.log("Serving static files from:", path.join(__dirname, '../uploads'));
 
 const server = http.createServer(app);

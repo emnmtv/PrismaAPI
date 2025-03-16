@@ -20,6 +20,8 @@ model User {
   verified         Boolean  @default(false)
   verificationCode String?
   role             String   @default("user") // user, creator, admin
+  profilePicture   String?  // Add this field
+  coverPhoto       String?  // Add this field
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   payments         Payment[] @relation("UserPayments") // Add this inverse relation for payments
