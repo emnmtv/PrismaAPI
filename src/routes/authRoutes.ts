@@ -28,6 +28,7 @@ import {
   handleDeletePostAdmin,
   handleGetAdminPosts,
   handleGetAllUsers,
+  handleGoogleLogin,
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
 import { sendMessage, fetchMessages, getUsersWithChatHistory } from '../controllers/chatController';
@@ -74,4 +75,8 @@ authRouter.put('/post/status', authenticateToken, handleUpdatePostStatus);
 authRouter.delete('/post/admin', authenticateToken, handleDeletePostAdmin);
 authRouter.get('/admin/posts', authenticateToken, handleGetAdminPosts);
 authRouter.get('/admin/users', authenticateToken, handleGetAllUsers);
+
+// Add this route
+authRouter.post('/google-login', handleGoogleLogin);
+
 export { authRouter };

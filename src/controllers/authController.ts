@@ -1,6 +1,6 @@
 import { Response,Request, } from 'express';
 import { AuthRequest } from '@/middleware/authRequest';
-
+import jwt from 'jsonwebtoken';
 import { 
   registerUser, 
   loginUser, 
@@ -24,6 +24,8 @@ import {
   fetchAllUsers,
 } from '../utils/authUtils';
 import { checkPaymentStatus } from '../utils/authUtils';
+import { JWT_SECRET } from '../middleware/authMiddleware';
+
 // Handle User Registration
 // Handle User Registration
 const handleRegister = async (req: AuthRequest, res: Response) => {
@@ -824,6 +826,54 @@ export const handleGetAllUsers = async (req: AuthRequest, res: Response): Promis
 
     const users = await fetchAllUsers();
     res.status(200).json(users);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Add this controller function
+export const handleGoogleLogin = async (req: Request, res: Response) => {
+  const { accessToken } = req.body;
+
+  try {
+    // Verify the Google token
+    const response = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${accessToken}`);
+    const userData = await response.json();
+
+    if (!userData.email) {
+      throw new Error('Failed to get user email from Google');
+    }
+
+    // Check if user exists
+    let user = await prisma.user.findUnique({
+      where: { email: userData.email }
+    });
+
+    // If user doesn't exist, create one
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email: userData.email,
+          firstName: userData.given_name,
+          lastName: userData.family_name,
+          password: '', // Empty password for Google users
+          verified: true, // Google users are already verified
+        }
+      });
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user.id },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(200).json({
+      message: 'Login successful',
+      token,
+      role: user.role
+    });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }

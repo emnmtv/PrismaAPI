@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = 'your_jwt_secret'; // Replace with your actual secret
+export const JWT_SECRET = 'your_jwt_secret';
 
 const authenticateToken = (
   req: Request,
