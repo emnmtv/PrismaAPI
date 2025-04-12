@@ -675,6 +675,66 @@ export const fetchAllUsers = async () => {
   }
 };
 
+// Function to get creator's ratings by ID (viewable by any user)
+export const getCreatorRatingsByCreatorId = async (creatorId: number) => {
+  try {
+    // Validate creatorId
+    if (!creatorId || typeof creatorId !== 'number') {
+      throw new Error('Invalid creatorId provided');
+    }
+
+    // Get all ratings for the specified creator
+    const ratings = await prisma.rating.findMany({
+      where: {
+        userId: creatorId
+      },
+      include: {
+        client: {
+          select: {
+            firstName: true,
+            lastName: true
+          }
+        },
+        payment: {
+          select: {
+            description: true,
+            amount: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    // Get aggregated stats
+    const stats = await prisma.rating.aggregate({
+      where: {
+        userId: creatorId
+      },
+      _avg: {
+        rating: true
+      },
+      _count: {
+        _all: true // Count all ratings
+      }
+    });
+
+    return {
+      ratings,
+      stats: {
+        average: stats._avg.rating || 0,
+        total: stats._count._all || 0
+      }
+    };
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to fetch ratings: ${error.message}`);
+    }
+    throw new Error('Failed to fetch ratings: Unknown error occurred');
+  }
+};
+
 export { registerUser, 
   loginUser, fetchProfile, 
   updateUserProfile, prisma, 

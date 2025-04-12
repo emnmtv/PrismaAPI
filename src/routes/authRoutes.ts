@@ -24,6 +24,7 @@ import {
   handleUpdateOrderStatusForClient,
   handleSubmitRating,
   handleGetCreatorRatings,
+  handleGetCreatorRatingsByCreatorId,
   handleUpdatePostStatus,
   handleDeletePostAdmin,
   handleGetAdminPosts,
@@ -69,6 +70,7 @@ authRouter.get('/client/payments', authenticateToken, handleFetchPaymentsForClie
 authRouter.put('/client/payment/status', authenticateToken, handleUpdateOrderStatusForClient);
 authRouter.post('/rate', authenticateToken, handleSubmitRating);
 authRouter.get('/ratings', authenticateToken, handleGetCreatorRatings);
+authRouter.get('/ratings/:creatorId', authenticateToken, handleGetCreatorRatingsByCreatorId);
 
 // Admin routes
 authRouter.put('/post/status', authenticateToken, handleUpdatePostStatus);

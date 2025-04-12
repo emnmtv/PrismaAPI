@@ -19,6 +19,7 @@ import {
   updateOrderStatusForClient,
   rateCreator,
   getCreatorRatings,
+  getCreatorRatingsByCreatorId,
   updatePostStatus,
   deletePostAdmin,
   fetchAllUsers,
@@ -879,6 +880,22 @@ export const handleGoogleLogin = async (req: Request, res: Response) => {
   }
 };
 
+// Add this new controller function
+export const handleGetCreatorRatingsByCreatorId = async (req: AuthRequest, res: Response) => {
+  try {
+    const creatorId = parseInt(req.params.creatorId);
+    
+    if (isNaN(creatorId)) {
+     res.status(400).json({ error: 'Invalid creator ID' });
+    }
+    
+    const ratings = await getCreatorRatingsByCreatorId(creatorId);
+    res.status(200).json(ratings);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
 export { 
   handleRegister, 
   handleLogin, 
@@ -893,5 +910,4 @@ export {
   handleUpdateOrderStatus,
   handleFetchPaymentsForClient,
   handleUpdateOrderStatusForClient,
-
 };

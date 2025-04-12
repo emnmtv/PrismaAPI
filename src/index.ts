@@ -41,6 +41,7 @@ const server = http.createServer(app);
 
 // Configure Socket.IO with CORS
 const io = new Server(server, {
+  path: '/socket.io',
   cors: {
     origin: "*", // Add your Vue app URLs
     methods: ["GET", "POST"],
