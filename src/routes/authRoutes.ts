@@ -29,10 +29,11 @@ import {
   handleDeletePostAdmin,
   handleGetAdminPosts,
   handleGetAllUsers,
-  handleGoogleLogin,
+  handleGoogleLogin
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
 import { sendMessage, fetchMessages, getUsersWithChatHistory } from '../controllers/chatController';
+import analyticsController from '../controllers/analyticsController';
 
 const authRouter = express.Router();
 
@@ -52,13 +53,27 @@ authRouter.put('/profile', authenticateToken, upload.fields([
   { name: 'profilePicture', maxCount: 1 },
   { name: 'coverPhoto', maxCount: 1 }
 ]), handleUpdateProfile);
-authRouter.post('/upgrade', authenticateToken,handleUpgradeToCreator);
+authRouter.post('/upgrade', authenticateToken, upload.fields([
+  { name: 'portfolioFile', maxCount: 1 },
+  { name: 'resumeFile', maxCount: 1 }
+]), handleUpgradeToCreator);
 authRouter.post('/payment', authenticateToken,handleInitiatePayment);
 authRouter.get('/cprofile', authenticateToken,handleGetCreatorProfile);
-authRouter.put('/editcprofile', authenticateToken,handleEditCreatorProfile);
-authRouter.put('/editpost', upload.fields([{ name: 'image' }, { name: 'video' }]),authenticateToken,handleEditPost);
+authRouter.put('/editcprofile', authenticateToken, upload.fields([
+  { name: 'portfolioFile', maxCount: 1 },
+  { name: 'resumeFile', maxCount: 1 }
+]), handleEditCreatorProfile);
+authRouter.put('/editpost', upload.fields([
+  { name: 'image' }, 
+  { name: 'video' },
+  { name: 'audio' }
+]), authenticateToken, handleEditPost);
 authRouter.put('/delete', authenticateToken,handleDeletePost);
-authRouter.post('/createpost', upload.fields([{ name: 'image' }, { name: 'video' }]),authenticateToken,handleCreatePost);
+authRouter.post('/createpost', upload.fields([
+  { name: 'image' }, 
+  { name: 'video' },
+  { name: 'audio' }
+]), authenticateToken, handleCreatePost);
 authRouter.get('/viewuserpost',authenticateToken, handleGetUserWithProfileAndPosts);
 authRouter.post('/sendmessage', authenticateToken, sendMessage);
 authRouter.get('/messages/:otherUserId', authenticateToken, fetchMessages);
@@ -71,6 +86,13 @@ authRouter.put('/client/payment/status', authenticateToken, handleUpdateOrderSta
 authRouter.post('/rate', authenticateToken, handleSubmitRating);
 authRouter.get('/ratings', authenticateToken, handleGetCreatorRatings);
 authRouter.get('/ratings/:creatorId', authenticateToken, handleGetCreatorRatingsByCreatorId);
+
+// Analytics & Engagement tracking routes - Updated to use analyticsController
+authRouter.post('/track/profile-view/:creatorId', analyticsController.handleTrackProfileView);
+authRouter.post('/track/post-view/:postId', analyticsController.handleTrackPostView);
+authRouter.post('/track/audio-play/:postId', analyticsController.handleTrackAudioPlay);
+authRouter.post('/track/click-through', analyticsController.handleTrackClickThrough);
+authRouter.get('/analytics/:creatorId?', authenticateToken, analyticsController.handleGetCreatorAnalytics);
 
 // Admin routes
 authRouter.put('/post/status', authenticateToken, handleUpdatePostStatus);

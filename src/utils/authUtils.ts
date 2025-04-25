@@ -150,27 +150,98 @@ const upgradeToCreator = async (
   bio?: string,
   profession?: string,
   typeOfProfession?: string,
-  genre?: string
+  genre?: string,
+  portfolioFile?: string,
+  resumeFile?: string,
+  socialLinks?: Array<{ platform: string; url: string; }>
 ) => {
-  // Update user role
-  const updatedUser = await prisma.user.update({
-    where: { id: userId },
-    data: { role: 'creator' },
-  });
+  // Validate social links (maximum 5)
+  if (socialLinks && socialLinks.length > 5) {
+    throw new Error('Maximum 5 social media links allowed');
+  }
 
-  // Create Creator Profile
-  const creatorProfile = await prisma.creatorProfile.create({
-    data: {
-      userId,
-      offers,
-      bio,
-      profession,
-      typeOfProfession,
-      genre,
+  // Start a transaction
+  return await prisma.$transaction(async (prisma) => {
+    // Update user role and get updated user
+    await prisma.user.update({
+      where: { id: userId },
+      data: { role: 'creator' },
+    });
+
+    // Create Creator Profile
+    const creatorProfile = await prisma.creatorProfile.create({
+      data: {
+        userId,
+        offers,
+        bio,
+        profession,
+        typeOfProfession,
+        genre,
+        creatorLevel: 0, // Start with 0 rating
+        portfolioFile,
+        resumeFile,
+      },
+    });
+
+    // Add social media links if provided
+    if (socialLinks && socialLinks.length > 0) {
+      await prisma.socialMediaLink.createMany({
+        data: socialLinks.map(link => ({
+          creatorProfileId: creatorProfile.id,
+          platform: link.platform,
+          url: link.url,
+        })),
+      });
+    }
+
+    // Return the creator profile with social links and user info
+    return await prisma.creatorProfile.findUnique({
+      where: { id: creatorProfile.id },
+      include: {
+        socialLinks: true,
+        user: true,
+      },
+    });
+  });
+};
+
+// Add a new function to update creator level based on ratings and engagement
+const updateCreatorLevel = async (creatorId: number) => {
+  // Get all ratings for the creator
+  const ratings = await prisma.rating.findMany({
+    where: {
+      userId: creatorId,
     },
   });
 
-  return { ...updatedUser, creatorProfile };
+  // Calculate average rating
+  const averageRating = ratings.length > 0
+    ? ratings.reduce((acc, curr) => acc + curr.rating, 0) / ratings.length
+    : 0;
+
+  // Get total number of completed orders
+  const completedOrders = await prisma.payment.count({
+    where: {
+      userId: creatorId,
+      status: 'paid',
+      orderStatus: 'completed',
+    },
+  });
+
+  // Calculate engagement score (0-5) based on completed orders
+  // You can adjust this formula based on your needs
+  const engagementScore = Math.min(completedOrders / 10, 5); // Max out at 5 after 50 orders
+
+  // Calculate final creator level (average of rating and engagement)
+  const creatorLevel = (averageRating + engagementScore) / 2;
+
+  // Update creator profile with new level
+  await prisma.creatorProfile.update({
+    where: { userId: creatorId },
+    data: { creatorLevel },
+  });
+
+  return creatorLevel;
 };
 
 // Function to edit the Creator Profile
@@ -180,34 +251,60 @@ const editCreatorProfile = async (
   bio?: string,
   profession?: string,
   typeOfProfession?: string,
-  genre?: string
+  genre?: string,
+  portfolioFile?: string,
+  resumeFile?: string,
+  socialLinks?: Array<{ platform: string; url: string; }>
 ) => {
   // Ensure 'offers' is a valid string, if not, throw an error
   if (!offers) {
     throw new Error('The offers field is required');
   }
 
-  // Update Creator Profile if it exists, otherwise create it
-  const updatedProfile = await prisma.creatorProfile.upsert({
-    where: { userId },
-    update: {
-      offers,
-      bio: bio || undefined,
-      profession: profession || undefined,
-      typeOfProfession: typeOfProfession || undefined,
-      genre: genre || undefined,
-    },
-    create: {
-      userId,
-      offers,
-      bio,
-      profession,
-      typeOfProfession,
-      genre,
-    },
-  });
+  // Start a transaction to handle social links update
+  return await prisma.$transaction(async (prisma) => {
+    // Update Creator Profile
+    const updatedProfile = await prisma.creatorProfile.update({
+      where: { userId },
+      data: {
+        offers,
+        bio: bio || undefined,
+        profession: profession || undefined,
+        typeOfProfession: typeOfProfession || undefined,
+        genre: genre || undefined,
+        portfolioFile: portfolioFile || undefined,
+        resumeFile: resumeFile || undefined,
+      },
+    });
 
-  return updatedProfile;
+    // If social links are provided, update them
+    if (socialLinks) {
+      // Delete existing social links
+      await prisma.socialMediaLink.deleteMany({
+        where: { creatorProfileId: updatedProfile.id }
+      });
+
+      // Add new social links
+      if (socialLinks.length > 0) {
+        await prisma.socialMediaLink.createMany({
+          data: socialLinks.map(link => ({
+            creatorProfileId: updatedProfile.id,
+            platform: link.platform,
+            url: link.url,
+          })),
+        });
+      }
+    }
+
+    // Return the updated profile with social links and user info
+    return await prisma.creatorProfile.findUnique({
+      where: { id: updatedProfile.id },
+      include: {
+        socialLinks: true,
+        user: true,
+      },
+    });
+  });
 };
 
 const createPost = async (
@@ -218,22 +315,20 @@ const createPost = async (
   amount?: string, // Accept amount as string from the frontend
   remarks?: string,
   image?: string,
-  video?: string
+  video?: string,
+  audio?: string // New parameter for audio files
 ) => {
   try {
-    // Check if the user has already created a post
-    const existingPost = await prisma.post.findFirst({
-      where: { userId },
-    });
-
-    if (existingPost) {
-      throw new Error('User already has a post. Only one post is allowed.');
-    }
-
     // Convert amount to Float
     const amountAsFloat = amount ? parseFloat(amount) : null;
 
-    // Create the new post if no existing post found
+    // Check for audio file and run copyright detection if present
+    let copyrightInfo = null;
+    if (audio) {
+      copyrightInfo = await checkAudioCopyright(audio);
+    }
+
+    // Create the new post
     const newPost = await prisma.post.create({
       data: {
         userId,
@@ -244,6 +339,8 @@ const createPost = async (
         remarks,
         image,
         video,
+        audio, // Add audio field
+        copyrightInfo: copyrightInfo ? JSON.stringify(copyrightInfo) : null // Store copyright info
       },
     });
 
@@ -257,34 +354,149 @@ const createPost = async (
   }
 };
 
+// Function to check audio copyright using AudD.io API
+const checkAudioCopyright = async (audioFilePath: string): Promise<any> => {
+  try {
+    const AUDD_API_KEY = process.env.AUDD_API_KEY || '4df708e6bbbd879d4c501530c751b0f9'; // Replace with your actual API key
+    const fs = require('fs');
+    const FormData = require('form-data');
+    const axios = require('axios');
+    
+    // Check file size before sending
+    const fileStats = fs.statSync(`uploads/audio/${audioFilePath}`);
+    const fileSizeInMB = fileStats.size / (1024 * 1024);
+    
+    // If file is too large, return early with a warning
+    if (fileSizeInMB > 20) {
+      console.warn(`Audio file ${audioFilePath} is too large (${fileSizeInMB.toFixed(2)}MB). Skipping copyright check.`);
+      return {
+        isDetected: false,
+        error: 'File too large for copyright detection',
+        warning: 'File size exceeds the 20MB limit for copyright detection service. Please upload smaller files for accurate copyright detection.'
+      };
+    }
+
+    // Create a form data object
+    const formData = new FormData();
+    formData.append('file', fs.createReadStream(`uploads/audio/${audioFilePath}`));
+    formData.append('api_token', AUDD_API_KEY);
+    formData.append('return', 'apple_music,spotify,musicbrainz,deezer');
+
+    // Make the API request with timeout to prevent long-running requests
+    const response = await axios.post('https://api.audd.io/', formData, {
+      headers: {
+        ...formData.getHeaders(),
+      },
+      timeout: 30000, // 30 second timeout
+    });
+
+    if (response.data.status === 'error') {
+      console.error('AudD API error:', response.data.error);
+      return {
+        isDetected: false,
+        error: response.data.error.error_message,
+      };
+    }
+
+    // Check if a song was recognized
+    if (response.data.result) {
+      return {
+        isDetected: true,
+        songInfo: {
+          title: response.data.result.title,
+          artist: response.data.result.artist,
+          album: response.data.result.album,
+          releaseDate: response.data.result.release_date,
+          label: response.data.result.label,
+          timecode: response.data.result.timecode,
+          songLink: response.data.result.song_link
+        },
+        services: {
+          appleMusic: response.data.result.apple_music,
+          spotify: response.data.result.spotify,
+          musicbrainz: response.data.result.musicbrainz,
+          deezer: response.data.result.deezer
+        }
+      };
+    } else {
+      // No copyright detected
+      return {
+        isDetected: false
+      };
+    }
+  } catch (error: any) {
+    console.error('Error checking audio copyright:', error);
+    
+    // Handle specific case of request entity too large (413)
+    if (error.response && error.response.status === 413) {
+      return {
+        isDetected: false,
+        error: 'File too large for copyright detection service',
+        warning: 'Please compress audio files or use smaller files (under 20MB) for copyright detection.'
+      };
+    }
+    
+    return {
+      isDetected: false,
+      error: 'Error connecting to copyright detection service',
+      message: error.message || 'Unknown error'
+    };
+  }
+};
+
 // authUtils.ts
 export const updatePost = async (
   postId: number,
   title: string,
   description: string,
-  detailedDescription?: string, // New field
-  amount?: number, // New field
-  remarks?: string, // New field
-  image?: string, // Base64 encoded image
-  video?: string // Base64 encoded video
+  detailedDescription?: string,
+  amount?: number,
+  remarks?: string,
+  image?: string,
+  video?: string,
+  audio?: string // Add audio parameter
 ) => {
   try {
+    // Get the existing post to check if audio has changed
+    const existingPost = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { audio: true, copyrightInfo: true }
+    });
+
+    if (!existingPost) {
+      throw new Error('Post not found');
+    }
+
+    // If audio file has changed, check for copyright
+    let copyrightInfo = existingPost.copyrightInfo;
+    if (audio && audio !== existingPost.audio) {
+      // Audio file has been updated, check for copyright
+      copyrightInfo = await checkAudioCopyright(audio);
+      // Convert copyright info to string for storage
+      copyrightInfo = copyrightInfo ? JSON.stringify(copyrightInfo) : null;
+    }
+
     const updatedPost = await prisma.post.update({
       where: { id: postId },
       data: {
         title,
         description,
-        detailedDescription, // Include detailed description
-        amount, // Include amount
-        remarks, // Include remarks
-        image, // Image is saved as base64 string
-        video, // Video is saved as base64 string
+        detailedDescription,
+        amount,
+        remarks,
+        image,
+        video,
+        audio, // Add audio file to update
+        copyrightInfo, // Update copyright info if audio has changed
       },
     });
 
     return updatedPost;
   } catch (error) {
-    throw new Error('Failed to update post');
+    if (error instanceof Error) {
+      throw new Error(`Failed to update post: ${error.message}`);
+    }
+    throw new Error('Failed to update post: Unknown error');
   }
 };
 // authUtils.ts
@@ -495,19 +707,12 @@ export const rateCreator = async (
       }
     });
 
-    // Calculate and update creator's average rating
-    const averageRating = await prisma.rating.aggregate({
-      where: {
-        userId: userId
-      },
-      _avg: {
-        rating: true
-      }
-    });
+    // Update creator level after new rating
+    const newCreatorLevel = await updateCreatorLevel(userId);
 
     return {
       rating: ratingRecord,
-      averageRating: averageRating._avg.rating
+      creatorLevel: newCreatorLevel
     };
   } catch (error: unknown) {
     if (error instanceof Error) {
@@ -735,12 +940,316 @@ export const getCreatorRatingsByCreatorId = async (creatorId: number) => {
   }
 };
 
+// ==================== ENGAGEMENT TRACKING FUNCTIONS ====================
+
+// Track profile view
+export const trackProfileView = async (creatorId: number, viewerId?: number) => {
+  try {
+    // Create an engagement record for profile view
+    const engagement = await prisma.engagement.create({
+      data: {
+        creatorId,
+        viewerId,
+        type: 'profile_view',
+      },
+    });
+    
+    // Update profile view count
+    await prisma.analyticsData.upsert({
+      where: {
+        creatorId_date_type: {
+          creatorId,
+          date: new Date().toISOString().split('T')[0],
+          type: 'profile_views',
+        },
+      },
+      update: {
+        count: { increment: 1 },
+      },
+      create: {
+        creatorId,
+        date: new Date().toISOString().split('T')[0],
+        type: 'profile_views',
+        count: 1,
+      },
+    });
+
+    return engagement;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to track profile view: ${error.message}`);
+    }
+    throw new Error('Failed to track profile view');
+  }
+};
+
+// Track post view
+export const trackPostView = async (postId: number, viewerId?: number) => {
+  try {
+    // Get the post to find creatorId
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { userId: true },
+    });
+
+    if (!post) {
+      throw new Error('Post not found');
+    }
+
+    const creatorId = post.userId;
+
+    // Create an engagement record for post view
+    const engagement = await prisma.engagement.create({
+      data: {
+        creatorId,
+        postId,
+        viewerId,
+        type: 'post_view',
+      },
+    });
+    
+    // Update post view count
+    await prisma.analyticsData.upsert({
+      where: {
+        creatorId_date_type: {
+          creatorId,
+          date: new Date().toISOString().split('T')[0],
+          type: 'post_views',
+        },
+      },
+      update: {
+        count: { increment: 1 },
+      },
+      create: {
+        creatorId,
+        date: new Date().toISOString().split('T')[0],
+        type: 'post_views',
+        count: 1,
+      },
+    });
+
+    return engagement;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to track post view: ${error.message}`);
+    }
+    throw new Error('Failed to track post view');
+  }
+};
+
+// Track audio playback
+export const trackAudioPlay = async (postId: number, viewerId?: number, duration?: number) => {
+  try {
+    // Get the post to find creatorId
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { userId: true },
+    });
+
+    if (!post) {
+      throw new Error('Post not found');
+    }
+
+    const creatorId = post.userId;
+
+    // Create an engagement record for audio play
+    const engagement = await prisma.engagement.create({
+      data: {
+        creatorId,
+        postId,
+        viewerId,
+        type: 'audio_play',
+        duration,
+      },
+    });
+    
+    // Update audio play count
+    await prisma.analyticsData.upsert({
+      where: {
+        creatorId_date_type: {
+          creatorId,
+          date: new Date().toISOString().split('T')[0],
+          type: 'audio_plays',
+        },
+      },
+      update: {
+        count: { increment: 1 },
+        totalDuration: { increment: duration || 0 },
+      },
+      create: {
+        creatorId,
+        date: new Date().toISOString().split('T')[0],
+        type: 'audio_plays',
+        count: 1,
+        totalDuration: duration || 0,
+      },
+    });
+
+    return engagement;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to track audio play: ${error.message}`);
+    }
+    throw new Error('Failed to track audio play');
+  }
+};
+
+// Track click-through (e.g., from post to profile, or profile to contact)
+export const trackClickThrough = async (sourceType: 'post' | 'profile', sourceId: number, destinationType: string, viewerId?: number) => {
+  try {
+    // Determine creatorId based on sourceType
+    let creatorId: number;
+    
+    if (sourceType === 'post') {
+      const post = await prisma.post.findUnique({
+        where: { id: sourceId },
+        select: { userId: true },
+      });
+      
+      if (!post) {
+        throw new Error('Source post not found');
+      }
+      
+      creatorId = post.userId;
+    } else {
+      // Source is a profile
+      creatorId = sourceId;
+    }
+
+    // Create engagement record for click-through
+    const engagement = await prisma.engagement.create({
+      data: {
+        creatorId,
+        sourceId,
+        viewerId,
+        type: 'click_through',
+        metadata: JSON.stringify({
+          sourceType,
+          destinationType,
+        }),
+      },
+    });
+    
+    // Update click-through count
+    await prisma.analyticsData.upsert({
+      where: {
+        creatorId_date_type: {
+          creatorId,
+          date: new Date().toISOString().split('T')[0],
+          type: `click_through_${sourceType}_to_${destinationType}`,
+        },
+      },
+      update: {
+        count: { increment: 1 },
+      },
+      create: {
+        creatorId,
+        date: new Date().toISOString().split('T')[0],
+        type: `click_through_${sourceType}_to_${destinationType}`,
+        count: 1,
+      },
+    });
+
+    return engagement;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to track click-through: ${error.message}`);
+    }
+    throw new Error('Failed to track click-through');
+  }
+};
+
+// Get creator engagement analytics summary
+export const getCreatorAnalytics = async (creatorId: number, startDate?: string, endDate?: string) => {
+  try {
+    // Set default date range to last 30 days if not specified
+    const end = endDate ? new Date(endDate) : new Date();
+    const start = startDate 
+      ? new Date(startDate) 
+      : new Date(end);
+    
+    if (!startDate) {
+      start.setDate(start.getDate() - 30); // Default to last 30 days
+    }
+
+    // Format dates for query
+    const formattedStartDate = start.toISOString().split('T')[0];
+    const formattedEndDate = end.toISOString().split('T')[0];
+
+    // Get all analytics data within date range
+    const analyticsData = await prisma.analyticsData.findMany({
+      where: {
+        creatorId,
+        date: {
+          gte: formattedStartDate,
+          lte: formattedEndDate,
+        },
+      },
+    });
+
+    // Calculate engagement metrics
+    const profileViews = analyticsData
+      .filter(data => data.type === 'profile_views')
+      .reduce((sum, data) => sum + data.count, 0);
+    
+    const postViews = analyticsData
+      .filter(data => data.type === 'post_views')
+      .reduce((sum, data) => sum + data.count, 0);
+    
+    const audioPlays = analyticsData
+      .filter(data => data.type === 'audio_plays')
+      .reduce((sum, data) => sum + data.count, 0);
+    
+    const totalPlayTime = analyticsData
+      .filter(data => data.type === 'audio_plays')
+      .reduce((sum, data) => sum + (data.totalDuration || 0), 0);
+    
+    const clickThroughs = analyticsData
+      .filter(data => data.type.startsWith('click_through_'))
+      .reduce((sum, data) => sum + data.count, 0);
+    
+    // Calculate derived metrics
+    const avgPlayTime = audioPlays > 0 ? totalPlayTime / audioPlays : 0;
+    const clickThroughRate = postViews > 0 ? clickThroughs / postViews : 0;
+
+    // Get daily data for charts
+    const dailyData = analyticsData.reduce((acc, data) => {
+      if (!acc[data.date]) {
+        acc[data.date] = {};
+      }
+      acc[data.date][data.type] = data.count;
+      return acc;
+    }, {} as Record<string, Record<string, number>>);
+
+    return {
+      summary: {
+        profileViews,
+        postViews,
+        audioPlays,
+        totalPlayTime,
+        avgPlayTime,
+        clickThroughs,
+        clickThroughRate,
+      },
+      dailyData,
+      dateRange: {
+        startDate: formattedStartDate,
+        endDate: formattedEndDate,
+      },
+    };
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to get creator analytics: ${error.message}`);
+    }
+    throw new Error('Failed to get creator analytics');
+  }
+};
+
 export { registerUser, 
   loginUser, fetchProfile, 
   updateUserProfile, prisma, 
   upgradeToCreator,
+  updateCreatorLevel,
   editCreatorProfile,
   createPost,
-
-
 };

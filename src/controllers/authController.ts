@@ -23,6 +23,11 @@ import {
   updatePostStatus,
   deletePostAdmin,
   fetchAllUsers,
+  trackProfileView,
+  trackPostView,
+  trackAudioPlay,
+  trackClickThrough,
+  getCreatorAnalytics
 } from '../utils/authUtils';
 import { checkPaymentStatus } from '../utils/authUtils';
 import { JWT_SECRET } from '../middleware/authMiddleware';
@@ -187,11 +192,51 @@ const handleUpdateProfile = async (req: AuthRequest, res: Response) => {
 };
 const handleUpgradeToCreator = async (req: AuthRequest, res: Response) => {
   const userId = req.user!.userId;
-  const { offers, bio, profession, typeOfProfession, genre } = req.body;
+  const { 
+    offers, 
+    bio, 
+    profession, 
+    typeOfProfession, 
+    genre,
+    socialLinks 
+  } = req.body;
+
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+  const portfolioFile = files?.portfolioFile?.[0]?.filename;
+  const resumeFile = files?.resumeFile?.[0]?.filename;
 
   try {
     if (!offers) {
       throw new Error('Offers field is required');
+    }
+
+    // Parse social links from string if it exists
+    let parsedSocialLinks;
+    if (socialLinks) {
+      try {
+        parsedSocialLinks = JSON.parse(socialLinks);
+      } catch (e) {
+        throw new Error('Invalid social links format');
+      }
+
+      // Validate social links array
+      if (!Array.isArray(parsedSocialLinks)) {
+        throw new Error('Social links must be an array');
+      }
+
+      if (parsedSocialLinks.length > 5) {
+        throw new Error('Maximum 5 social media links allowed');
+      }
+
+      // Validate each social link
+      parsedSocialLinks.forEach((link: any) => {
+        if (!link.platform || !link.url) {
+          throw new Error('Each social link must have a platform and URL');
+        }
+        if (!isValidUrl(link.url)) {
+          throw new Error(`Invalid URL for platform: ${link.platform}`);
+        }
+      });
     }
 
     // Upgrade the user to a creator and create the creator profile
@@ -201,7 +246,10 @@ const handleUpgradeToCreator = async (req: AuthRequest, res: Response) => {
       bio,
       profession,
       typeOfProfession,
-      genre
+      genre,
+      portfolioFile || undefined,
+      resumeFile || undefined,
+      parsedSocialLinks
     );
 
     res.status(200).json({
@@ -212,6 +260,17 @@ const handleUpgradeToCreator = async (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: (error as Error).message });
   }
 };
+
+// Helper function to validate URLs
+const isValidUrl = (url: string): boolean => {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const handleGetCreatorProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = req.user!.userId;
 
@@ -221,6 +280,8 @@ const handleGetCreatorProfile = async (req: AuthRequest, res: Response): Promise
       where: { userId },
       include: {
         user: true,  // This will include the associated User model in the result
+        socialLinks: true,
+        
       },
     });
 
@@ -241,27 +302,71 @@ const handleGetCreatorProfile = async (req: AuthRequest, res: Response): Promise
 // Function to handle editing the Creator Profile
 const handleEditCreatorProfile = async (req: AuthRequest, res: Response) => {
   const userId = req.user!.userId;
-  const { offers, bio, profession, typeOfProfession, genre } = req.body;
+  const { offers, bio, profession, typeOfProfession, genre, socialLinks } = req.body;
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] };
 
   try {
     // Validate at least one field to be updated
-    if (!offers && !bio && !profession && !typeOfProfession && !genre) {
+    if (!offers && !bio && !profession && !typeOfProfession && !genre && !files && !socialLinks) {
       throw new Error('At least one field must be provided to edit the profile');
+    }
+
+    // Get file names if files were uploaded
+    const portfolioFile = files?.portfolioFile?.[0]?.filename;
+    const resumeFile = files?.resumeFile?.[0]?.filename;
+
+    // Parse social links if provided
+    let parsedSocialLinks;
+    if (socialLinks) {
+      try {
+        parsedSocialLinks = JSON.parse(socialLinks);
+        if (!Array.isArray(parsedSocialLinks)) {
+          throw new Error('Social links must be an array');
+        }
+        if (parsedSocialLinks.length > 5) {
+          throw new Error('Maximum 5 social media links allowed');
+        }
+        // Validate each social link
+        parsedSocialLinks.forEach((link: any) => {
+          if (!link.platform || !link.url) {
+            throw new Error('Each social link must have a platform and URL');
+          }
+          if (!isValidUrl(link.url)) {
+            throw new Error(`Invalid URL for platform: ${link.platform}`);
+          }
+        });
+      } catch (e) {
+        throw new Error('Invalid social links format');
+      }
     }
 
     // Edit the creator profile
     const editedProfile = await editCreatorProfile(
       userId,
-      offers,  // Now 'offers' must be provided
+      offers,
       bio,
       profession,
       typeOfProfession,
-      genre
+      genre,
+      portfolioFile || undefined,
+      resumeFile || undefined,
+      parsedSocialLinks
     );
+
+    if (!editedProfile) {
+      throw new Error('Failed to update creator profile');
+    }
+
+    // Add full URLs for files in the response
+    const responseProfile = {
+      ...editedProfile,
+      portfolioFile: editedProfile.portfolioFile ? `/uploads/documents/${editedProfile.portfolioFile}` : null,
+      resumeFile: editedProfile.resumeFile ? `/uploads/documents/${editedProfile.resumeFile}` : null,
+    };
 
     res.status(200).json({
       message: 'Creator Profile updated successfully',
-      editedProfile,
+      profile: responseProfile,
     });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
@@ -271,20 +376,58 @@ const handleEditCreatorProfile = async (req: AuthRequest, res: Response) => {
 
 
 const handleCreatePost = async (req: AuthRequest, res: Response) => {
-  const userId = req.user!.userId; // Assuming user is authenticated
-  const { title, description, detailedDescription, amount, remarks } = req.body;
-
-  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-  const image = files?.image?.[0]?.filename;
-  const video = files?.video?.[0]?.filename;
-
   try {
-    if (!title || !description) {
-      throw new Error('Title and description are required');
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(403).json({ error: 'User ID not found in token' });
+      return;
     }
 
-    // Call the function to create the post
-    const post = await createPost(
+    const { title, description, detailedDescription, amount, remarks } = req.body;
+
+    // Log the request body to debug undefined values
+    console.log('Post creation request body:', req.body);
+
+    // Validate title and description
+    if (!title || title === 'undefined') {
+      res.status(400).json({ error: 'Title is required and cannot be undefined' });
+      return;
+    }
+
+    if (!description || description === 'undefined') {
+      res.status(400).json({ error: 'Description is required and cannot be undefined' });
+      return;
+    }
+
+    // Get files if present
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    const image = files?.image?.[0]?.filename;
+    const video = files?.video?.[0]?.filename;
+    const audio = files?.audio?.[0]?.filename;
+
+    // Validate audio file size if provided - ensure it's not too large
+    if (audio) {
+      const fs = require('fs');
+      const audioFilePath = `uploads/audio/${audio}`;
+      
+      try {
+        const stats = fs.statSync(audioFilePath);
+        const fileSizeInMB = stats.size / (1024 * 1024);
+        
+        if (fileSizeInMB > 20) {
+          res.status(400).json({
+            error: 'Audio file too large',
+            message: 'Audio files must be under 20MB for copyright detection. Please compress your file or upload a smaller one.'
+          });
+          return;
+        }
+      } catch (err) {
+        console.error('Error checking audio file size:', err);
+        // Continue even if we can't check size, the post creation will still work
+      }
+    }
+
+    const newPost = await createPost(
       userId,
       title,
       description,
@@ -292,60 +435,118 @@ const handleCreatePost = async (req: AuthRequest, res: Response) => {
       amount,
       remarks,
       image,
-      video
+      video,
+      audio
     );
 
-    res.status(200).json({
+    // Log the new post for debugging
+    console.log('New post created:', newPost);
+
+    res.status(201).json({
       message: 'Post created successfully',
-      post,
+      post: newPost, // Return as 'post' field to match frontend's expectation
     });
-  } catch (error) {
-    res.status(400).json({ error: (error as Error).message });
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      res.status(400).json({ error: error.message });
+    } else {
+      res.status(400).json({ error: 'Failed to create post' });
+    }
   }
 };
 
 export const handleEditPost = async (req: AuthRequest, res: Response) => {
-  const userId = req.user!.userId; // Assuming user is authenticated
-  const { postId, title, description, detailedDescription, amount, remarks } = req.body;
-
-  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-  const image = files?.image?.[0]?.filename;
-  const video = files?.video?.[0]?.filename;
-
   try {
-    if (!postId || !title || !description) {
-      throw new Error('Post ID, title, and description are required');
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(403).json({ error: 'User ID not found in token' });
+      return;
     }
 
+    const { postId, title, description, detailedDescription, amount, remarks } = req.body;
+
+    if (!postId || !title || !description) {
+      res.status(400).json({ error: 'Post ID, title, and description are required' });
+      return;
+    }
+
+    // Get files if present
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const image = files?.image?.[0]?.filename;
+    const video = files?.video?.[0]?.filename;
+    const audio = files?.audio?.[0]?.filename;
+
     // Check if the post exists and if the user is the owner
-    const post = await prisma.post.findUnique({ where: { id: postId } });
+    const post = await prisma.post.findUnique({ 
+      where: { id: parseInt(postId) } 
+    });
 
     if (!post) {
-      throw new Error('Post not found');
+      res.status(404).json({ error: 'Post not found' });
+      return;
     }
 
     if (post.userId !== userId) {
-      throw new Error('You can only edit your own posts');
+      res.status(403).json({ error: 'You can only edit your own posts' });
+      return;
+    }
+
+    // Validate audio file size if provided - ensure it's not too large
+    if (audio) {
+      const fs = require('fs');
+      const audioFilePath = `uploads/audio/${audio}`;
+      
+      try {
+        const stats = fs.statSync(audioFilePath);
+        const fileSizeInMB = stats.size / (1024 * 1024);
+        
+        if (fileSizeInMB > 20) {
+          res.status(400).json({
+            error: 'Audio file too large',
+            message: 'Audio files must be under 20MB for copyright detection. Please compress your file or upload a smaller one.'
+          });
+          return;
+        }
+      } catch (err) {
+        console.error('Error checking audio file size:', err);
+        // Continue even if we can't check size, the post update will still work
+      }
+    }
+
+    // Parse amount to number if it's a string
+    let parsedAmount = amount;
+    if (typeof amount === 'string' && amount.trim() !== '') {
+      parsedAmount = parseFloat(amount);
+      if (isNaN(parsedAmount)) {
+        res.status(400).json({ error: 'Amount must be a valid number' });
+        return;
+      }
     }
 
     // Call the function to update the post
     const updatedPost = await updatePost(
-      postId,
+      parseInt(postId),
       title,
       description,
       detailedDescription,
-      amount,
+      parsedAmount,
       remarks,
       image,
-      video
+      video,
+      audio // Add audio to the update
     );
 
     res.status(200).json({
       message: 'Post updated successfully',
-      post: updatedPost,
+      data: updatedPost,
     });
   } catch (error) {
-    res.status(400).json({ error: (error as Error).message });
+    console.error('Error updating post:', error);
+    if (error instanceof Error) {
+      res.status(400).json({ error: error.message });
+    } else {
+      res.status(400).json({ error: 'Failed to update post' });
+    }
   }
 };
 export const handleGetUserWithProfileAndPosts = async (
@@ -896,6 +1097,122 @@ export const handleGetCreatorRatingsByCreatorId = async (req: AuthRequest, res: 
   }
 };
 
+// Handle tracking profile view
+export const handleTrackProfileView = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const creatorId = parseInt(req.params.creatorId);
+    const viewerId = req.user?.userId; // May be undefined for anonymous views
+    
+    if (isNaN(creatorId)) {
+      res.status(400).json({ error: 'Invalid creator ID' });
+      return;
+    }
+    
+    const engagement = await trackProfileView(creatorId, viewerId);
+    res.status(200).json({ success: true, engagement });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Handle tracking post view
+export const handleTrackPostView = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const postId = parseInt(req.params.postId);
+    const viewerId = req.user?.userId; // May be undefined for anonymous views
+    
+    if (isNaN(postId)) {
+      res.status(400).json({ error: 'Invalid post ID' });
+      return;
+    }
+    
+    const engagement = await trackPostView(postId, viewerId);
+    res.status(200).json({ success: true, engagement });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Handle tracking audio play
+export const handleTrackAudioPlay = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const postId = parseInt(req.params.postId);
+    const viewerId = req.user?.userId; // May be undefined for anonymous views
+    const duration = req.body.duration ? parseInt(req.body.duration) : undefined;
+    
+    if (isNaN(postId)) {
+      res.status(400).json({ error: 'Invalid post ID' });
+      return;
+    }
+    
+    const engagement = await trackAudioPlay(postId, viewerId, duration);
+    res.status(200).json({ success: true, engagement });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Handle tracking click-through
+export const handleTrackClickThrough = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { sourceType, sourceId, destinationType } = req.body;
+    const viewerId = req.user?.userId; // May be undefined for anonymous views
+    
+    if (!sourceType || !sourceId || !destinationType) {
+      res.status(400).json({ error: 'sourceType, sourceId, and destinationType are required' });
+      return;
+    }
+    
+    if (sourceType !== 'post' && sourceType !== 'profile') {
+      res.status(400).json({ error: 'sourceType must be either "post" or "profile"' });
+      return;
+    }
+    
+    const parsedSourceId = parseInt(sourceId);
+    if (isNaN(parsedSourceId)) {
+      res.status(400).json({ error: 'Invalid source ID' });
+      return;
+    }
+    
+    const engagement = await trackClickThrough(
+      sourceType as 'post' | 'profile',
+      parsedSourceId,
+      destinationType,
+      viewerId
+    );
+    
+    res.status(200).json({ success: true, engagement });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Handle getting creator analytics
+export const handleGetCreatorAnalytics = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const creatorId = req.params.creatorId 
+      ? parseInt(req.params.creatorId)
+      : req.user!.userId; // Default to authenticated user if no ID provided
+    
+    const { startDate, endDate } = req.query;
+    
+    if (isNaN(creatorId)) {
+      res.status(400).json({ error: 'Invalid creator ID' });
+      return;
+    }
+    
+    const analytics = await getCreatorAnalytics(
+      creatorId,
+      startDate as string | undefined,
+      endDate as string | undefined
+    );
+    
+    res.status(200).json(analytics);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
 export { 
   handleRegister, 
   handleLogin, 
@@ -909,5 +1226,5 @@ export {
   handleFetchPayments,
   handleUpdateOrderStatus,
   handleFetchPaymentsForClient,
-  handleUpdateOrderStatusForClient,
+  handleUpdateOrderStatusForClient
 };

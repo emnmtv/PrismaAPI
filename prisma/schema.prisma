@@ -32,6 +32,9 @@ model User {
   receivedMessages Message[] @relation("ReceivedMessages") // Add this relation
   receivedRatings  Rating[] @relation("ReceivedRatings")
   givenRatings     Rating[] @relation("GivenRatings")
+  receivedEngagements Engagement[] @relation("ReceivedEngagements") // Add relation for received engagements
+  givenEngagements Engagement[] @relation("GivenEngagements") // Add relation for given engagements
+  analytics        AnalyticsData[] @relation("CreatorAnalytics") // Add relation for analytics data
 }
 
 model CreatorProfile {
@@ -39,13 +42,31 @@ model CreatorProfile {
   userId           Int     @unique
   offers           String  // e.g., "luthier, guitarist"
   bio              String?
- genre              String?
+  genre            String?
   profession       String? // e.g., "Musician", "Producer", etc.
   typeOfProfession String? // Main category: "guitarist", "bassist", etc.
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  isVerified       Boolean  @default(false)
+  creatorLevel     Float    @default(0.0) // Rating from 0 to 5, based on engagement and ratings
+  portfolioFile    String?  // Store the file path
+  resumeFile       String?  // Store the file path
+  socialLinks      SocialMediaLink[]
 
   user             User    @relation(fields: [userId], references: [id])
+}
+
+model SocialMediaLink {
+  id               Int      @id @default(autoincrement())
+  creatorProfileId Int
+  platform         String   // e.g., "Facebook", "Twitter", "Instagram", etc.
+  url             String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  creatorProfile   CreatorProfile @relation(fields: [creatorProfileId], references: [id])
+
+  @@unique([creatorProfileId, platform]) // Ensure one platform per creator
 }
 
 model Post {
@@ -58,9 +79,12 @@ model Post {
   remarks           String?   
   image             String?   
   video             String?   
+  audio             String?   // New field for audio files
+  copyrightInfo     String?   @db.Text // JSON string containing copyright detection results - using TEXT type
   status            String    @default("pending") // "pending", "approved", "rejected"
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  engagements       Engagement[] // Add relation for engagements on posts
 
   user              User      @relation(fields: [userId], references: [id])
 }
@@ -108,5 +132,47 @@ model Rating {
   user        User     @relation("ReceivedRatings", fields: [userId], references: [id])
   client      User     @relation("GivenRatings", fields: [clientId], references: [id])
   payment     Payment  @relation(fields: [paymentId], references: [id])
+}
+
+model Engagement {
+  id          Int       @id @default(autoincrement())
+  creatorId   Int       // The creator who receives the engagement
+  viewerId    Int?      // The user viewing/engaging (optional, for anonymous views)
+  postId      Int?      // If engagement is related to a post
+  sourceId    Int?      // Generic source ID (could be post ID, profile ID, etc.)
+  type        String    // Type of engagement: profile_view, post_view, audio_play, click_through
+  duration    Int?      // For tracking audio play duration in seconds
+  ipAddress   String?   // IP address of the viewer (anonymized if needed)
+  deviceInfo  String?   // Device type, browser, OS info
+  location    String?   // Geographic location info (country, city)
+  sessionId   String?   // To track continuous engagement from the same session
+  referrerUrl String?   // Where the user came from
+  exitUrl     String?   // Where the user went after engagement (for click_through)
+  metadata    String?   @db.Text // JSON string with additional data
+  createdAt   DateTime  @default(now())
+  
+  creator     User      @relation("ReceivedEngagements", fields: [creatorId], references: [id])
+  viewer      User?     @relation("GivenEngagements", fields: [viewerId], references: [id])
+  post        Post?     @relation(fields: [postId], references: [id])
+}
+
+model AnalyticsData {
+  id             Int       @id @default(autoincrement())
+  creatorId      Int       // The creator the analytics are for
+  date           String    // Date in YYYY-MM-DD format
+  type           String    // Type of metric: profile_views, post_views, etc.
+  count          Int       @default(0) // Count of the metric
+  totalDuration  Int?      // Total duration for time-based metrics (in seconds)
+  uniqueVisitors Int?      // Count of unique visitors based on IP/session
+  bounceRate     Float?    // Percentage of visitors who leave after one engagement
+  conversionRate Float?    // Percentage of viewers who performed desired action (e.g., contact, payment)
+  avgEngagementTime Float? // Average time spent on profile/content
+  deviceBreakdown String?  @db.Text // JSON with device type percentages
+  locationData    String?  @db.Text // JSON with geographic breakdown
+  referrerData    String?  @db.Text // JSON with referrer source breakdown
+  
+  creator        User      @relation("CreatorAnalytics", fields: [creatorId], references: [id])
+  
+  @@unique([creatorId, date, type]) // Ensure one record per creator-date-type
 }
 
