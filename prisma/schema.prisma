@@ -19,6 +19,8 @@ model User {
   dateOfBirth      DateTime?
   verified         Boolean  @default(false)
   verificationCode String?
+  resetCode        String?   // Add this field for password reset code
+  resetCodeExpiry  DateTime? // Add this field for code expiration
   role             String   @default("user") // user, creator, admin
   profilePicture   String?  // Add this field
   coverPhoto       String?  // Add this field
@@ -35,6 +37,11 @@ model User {
   receivedEngagements Engagement[] @relation("ReceivedEngagements") // Add relation for received engagements
   givenEngagements Engagement[] @relation("GivenEngagements") // Add relation for given engagements
   analytics        AnalyticsData[] @relation("CreatorAnalytics") // Add relation for analytics data
+  notifications    Notification[] // Add relation for notifications
+  copyrightStrikes Int         @default(0) // Track number of copyright strikes
+  underReview      Boolean     @default(false) // Flag for accounts under admin review
+  restrictionType  String?     // Type of restriction: 'warning' or 'suspended'
+  restrictionExpiresAt DateTime? // When the restriction expires
 }
 
 model CreatorProfile {
@@ -103,6 +110,8 @@ model Payment {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   rating           Rating?
+  adminFee         Int?     // Store the admin fee amount (20% of the total)
+  isFeeClaimed     Boolean  @default(false) // Track if the admin fee has been claimed/processed
 
   user             User     @relation("UserPayments", fields: [userId], references: [id]) // Relation to User
   client           User     @relation("ClientPayments", fields: [clientId], references: [id]) // Relation to User
@@ -174,5 +183,46 @@ model AnalyticsData {
   creator        User      @relation("CreatorAnalytics", fields: [creatorId], references: [id])
   
   @@unique([creatorId, date, type]) // Ensure one record per creator-date-type
+}
+
+model Notification {
+  id          Int      @id @default(autoincrement())
+  userId      Int      // User receiving the notification
+  type        String   // Type of notification (e.g., "copyright_strike", "account_review", "system")
+  title       String   // Short title/summary
+  message     String   @db.Text // Full notification message
+  read        Boolean  @default(false) // Whether the notification has been read
+  relatedId   Int?     // Optional ID of related entity (like a post)
+  metadata    String?  @db.Text // Additional data as JSON string
+  createdAt   DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+// New model for app-wide analytics
+model AppAnalytics {
+  id                  Int       @id @default(autoincrement())
+  date                String    // Date in YYYY-MM-DD format
+  totalTransactions   Int       @default(0) // Total number of transactions
+  totalAmount         Int       @default(0) // Total amount processed in the smallest unit (e.g., cents)
+  adminRevenue        Int       @default(0) // Admin revenue (20% of transactions)
+  userCount           Int       @default(0) // Total user count
+  newUserCount        Int       @default(0) // New users registered on this date
+  activeUserCount     Int       @default(0) // Users who were active on this date
+  postCount           Int       @default(0) // Total posts
+  newPostCount        Int       @default(0) // New posts created on this date
+  engagementCount     Int       @default(0) // Total engagements (views, plays, etc.)
+  messageCount        Int       @default(0) // Total messages exchanged
+  copyrightStrikes    Int       @default(0) // Copyright strikes issued
+  averageRating       Float?    // Average rating across all creators
+  conversionRate      Float?    // Percentage of post views that lead to transactions
+  topCreators         String?   @db.Text // JSON array of top performing creators
+  topPosts            String?   @db.Text // JSON array of top performing posts
+  deviceStats         String?   @db.Text // JSON with device usage breakdown
+  metricBreakdown     String?   @db.Text // Detailed breakdown of various metrics as JSON
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  
+  @@unique([date]) // Only one record per day
 }
 

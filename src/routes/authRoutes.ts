@@ -29,11 +29,17 @@ import {
   handleDeletePostAdmin,
   handleGetAdminPosts,
   handleGetAllUsers,
-  handleGoogleLogin
+  handleGoogleLogin,
+  handleGetUsersUnderReview,
+  handleGetUsersWithRestrictions,
+  handleForgotPassword,
+  handleResetPassword
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
 import { sendMessage, fetchMessages, getUsersWithChatHistory } from '../controllers/chatController';
 import analyticsController from '../controllers/analyticsController';
+import notificationController from '../controllers/notificationController';
+import adminAnalyticsController from '../controllers/adminAnalyticsController';
 
 const authRouter = express.Router();
 
@@ -44,8 +50,8 @@ authRouter.post('/verify', handleEmailVerification);
 authRouter.get('/viewuserpost2', handleGetUserWithProfileAndPosts2);
 authRouter.get('/viewpost', handleGetPostWithUserDetails);
 authRouter.get('/allpost', handleGetAllPostsWithUserDetails);
-
-
+authRouter.post('/forgot-password', handleForgotPassword);
+authRouter.post('/reset-password', handleResetPassword);
 
 // Protected routes
 authRouter.get('/profile', authenticateToken, handleGetProfile);
@@ -87,6 +93,11 @@ authRouter.post('/rate', authenticateToken, handleSubmitRating);
 authRouter.get('/ratings', authenticateToken, handleGetCreatorRatings);
 authRouter.get('/ratings/:creatorId', authenticateToken, handleGetCreatorRatingsByCreatorId);
 
+// Notification routes
+authRouter.get('/notifications', authenticateToken, notificationController.handleGetNotifications);
+authRouter.put('/notifications/:notificationId/read', authenticateToken, notificationController.handleMarkNotificationAsRead);
+authRouter.put('/notifications/read-all', authenticateToken, notificationController.handleMarkAllNotificationsAsRead);
+
 // Analytics & Engagement tracking routes - Updated to use analyticsController
 authRouter.post('/track/profile-view/:creatorId', analyticsController.handleTrackProfileView);
 authRouter.post('/track/post-view/:postId', analyticsController.handleTrackPostView);
@@ -99,6 +110,18 @@ authRouter.put('/post/status', authenticateToken, handleUpdatePostStatus);
 authRouter.delete('/post/admin', authenticateToken, handleDeletePostAdmin);
 authRouter.get('/admin/posts', authenticateToken, handleGetAdminPosts);
 authRouter.get('/admin/users', authenticateToken, handleGetAllUsers);
+authRouter.get('/admin/users/review', authenticateToken, handleGetUsersUnderReview);
+authRouter.get('/admin/users/restricted', authenticateToken, handleGetUsersWithRestrictions);
+authRouter.put('/admin/copyright-review', authenticateToken, notificationController.handleReviewUserCopyrightStatus);
+
+// Admin analytics routes
+authRouter.get('/admin/analytics/overview', authenticateToken, adminAnalyticsController.getAppOverview);
+authRouter.get('/admin/analytics/transactions', authenticateToken, adminAnalyticsController.getTransactionDetails);
+authRouter.post('/admin/analytics/claim-fees', authenticateToken, adminAnalyticsController.claimAdminFees);
+authRouter.get('/admin/analytics/daily', authenticateToken, adminAnalyticsController.generateDailyAnalytics);
+authRouter.get('/admin/analytics/range', authenticateToken, adminAnalyticsController.getAnalyticsRange);
+authRouter.put('/admin/analytics/fee/:paymentId', authenticateToken, adminAnalyticsController.updateAdminFee);
+authRouter.post('/admin/analytics/schedule', authenticateToken, adminAnalyticsController.runScheduledAnalytics);
 
 // Add this route
 authRouter.post('/google-login', handleGoogleLogin);

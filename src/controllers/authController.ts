@@ -27,12 +27,13 @@ import {
   trackPostView,
   trackAudioPlay,
   trackClickThrough,
-  getCreatorAnalytics
+  getCreatorAnalytics,
+  requestPasswordReset,
+  resetPassword
 } from '../utils/authUtils';
 import { checkPaymentStatus } from '../utils/authUtils';
 import { JWT_SECRET } from '../middleware/authMiddleware';
 
-// Handle User Registration
 // Handle User Registration
 const handleRegister = async (req: AuthRequest, res: Response) => {
   const {
@@ -46,6 +47,22 @@ const handleRegister = async (req: AuthRequest, res: Response) => {
     role, // Accept the role from request
   } = req.body;
 
+  // Validate required fields
+  if (!email || !password || !firstName || !lastName) {
+    res.status(400).json({ error: 'Email, password, first name, and last name are required' });
+  }
+
+  // Simple email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    res.status(400).json({ error: 'Invalid email format' });
+  }
+
+  // Password strength validation
+  if (password.length < 6) {
+    res.status(400).json({ error: 'Password must be at least 6 characters long' });
+  }
+
   try {
     const user = await registerUser(
       email,
@@ -57,15 +74,31 @@ const handleRegister = async (req: AuthRequest, res: Response) => {
       dateOfBirth ? new Date(dateOfBirth) : undefined,
       role // Pass role while registering
     );
-    res.status(201).json({ message: 'User registered successfully. Please verify your email.', user });
+    res.status(201).json({ 
+      message: 'User registered successfully. Please verify your email.', 
+      user,
+      resent: user.verificationCode !== null // Indicate if this is a resend
+    });
   } catch (error) {
-    res.status(400).json({ error: (error as Error).message });
+    const errorMessage = (error as Error).message;
+    
+    // Check if the error is about email already in use
+    if (errorMessage.includes('Email already in use')) {
+      res.status(409).json({ error: errorMessage }); // 409 Conflict
+    } else {
+      res.status(400).json({ error: errorMessage });
+    }
   }
 };
 
 // Handle Email Verification
 const handleEmailVerification = async (req: AuthRequest, res: Response) => {
   const { email, code } = req.body;
+
+  // Validate required fields
+  if (!email || !code) {
+     res.status(400).json({ error: 'Email and verification code are required' });
+  }
 
   try {
     const user = await prisma.user.findUnique({ where: { email } });
@@ -76,6 +109,18 @@ const handleEmailVerification = async (req: AuthRequest, res: Response) => {
 
     if (user.verificationCode !== code) {
       throw new Error('Invalid verification code');
+    }
+
+    // Check if verification code is expired (older than 10 minutes)
+    if (user.createdAt) {
+      const codeAge = new Date().getTime() - user.createdAt.getTime();
+      const tenMinutes = 10 * 60 * 1000; // 10 minutes in milliseconds
+      
+      if (codeAge > tenMinutes) {
+        // Delete the user record as the code is expired
+        await prisma.user.delete({ where: { email } });
+        throw new Error('Verification code expired. Please register again to receive a new code.');
+      }
     }
 
     await prisma.user.update({
@@ -654,7 +699,11 @@ export const handleGetPostWithUserDetails = async (req: Request, res: Response):
       include: {
         user: {
           include: {
-            creatorProfile: true,
+            creatorProfile: {
+              include: {
+                socialLinks: true // Include social links
+              }
+            },
           },
         },
       },
@@ -665,13 +714,17 @@ export const handleGetPostWithUserDetails = async (req: Request, res: Response):
       return;
     }
 
-    // Remove URL construction for image and video
+    // Format profile pictures
     const postWithUserDetails = {
       ...post,
       user: {
         ...post.user,
+        profilePicture: post.user.profilePicture ? `/uploads/${post.user.profilePicture}` : null,
+        coverPhoto: post.user.coverPhoto ? `/uploads/${post.user.coverPhoto}` : null,
         creatorProfile: post.user.creatorProfile ? {
           ...post.user.creatorProfile,
+          portfolioFile: post.user.creatorProfile.portfolioFile ? `/uploads/documents/${post.user.creatorProfile.portfolioFile}` : null,
+          resumeFile: post.user.creatorProfile.resumeFile ? `/uploads/documents/${post.user.creatorProfile.resumeFile}` : null,
         } : null,
       },
     };
@@ -693,7 +746,11 @@ export const handleGetAllPostsWithUserDetails = async (req: Request, res: Respon
       include: {
         user: {
           include: {
-            creatorProfile: true,
+            creatorProfile: {
+              include: {
+                socialLinks: true
+              }
+            },
           },
         },
       },
@@ -704,13 +761,17 @@ export const handleGetAllPostsWithUserDetails = async (req: Request, res: Respon
       return;
     }
 
-    // Remove URL construction for image and video
+    // Format profile pictures and documents
     const postsWithUserDetails = posts.map((post) => ({
       ...post,
       user: {
         ...post.user,
+        profilePicture: post.user.profilePicture ? `/uploads/${post.user.profilePicture}` : null,
+        coverPhoto: post.user.coverPhoto ? `/uploads/${post.user.coverPhoto}` : null,
         creatorProfile: post.user.creatorProfile ? {
           ...post.user.creatorProfile,
+          portfolioFile: post.user.creatorProfile.portfolioFile ? `/uploads/documents/${post.user.creatorProfile.portfolioFile}` : null,
+          resumeFile: post.user.creatorProfile.resumeFile ? `/uploads/documents/${post.user.creatorProfile.resumeFile}` : null,
         } : null,
       },
     }));
@@ -1033,6 +1094,117 @@ export const handleGetAllUsers = async (req: AuthRequest, res: Response): Promis
   }
 };
 
+// Get users under copyright review (admin only)
+const handleGetUsersUnderReview = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    // Verify admin role
+    const admin = await prisma.user.findUnique({
+      where: { id: req.user!.userId }
+    });
+
+    if (!admin || admin.role !== 'admin') {
+      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
+      return;
+    }
+
+    // Find users under copyright review
+    const usersUnderReview = await prisma.user.findMany({
+      where: {
+        underReview: true
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        copyrightStrikes: true,
+        underReview: true,
+        createdAt: true,
+        updatedAt: true,
+        creatorProfile: {
+          select: {
+            id: true,
+            profession: true,
+            bio: true,
+          }
+        },
+        posts: {
+          select: {
+            id: true,
+            title: true,
+            audio: true,
+            copyrightInfo: true,
+            createdAt: true,
+          },
+          where: {
+            audio: { not: null },
+            copyrightInfo: { not: null }
+          },
+          take: 5,
+          orderBy: {
+            createdAt: 'desc'
+          }
+        },
+        _count: {
+          select: {
+            posts: true
+          }
+        }
+      }
+    });
+
+    res.status(200).json(usersUnderReview);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Get users with active restrictions (admin only)
+const handleGetUsersWithRestrictions = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    // Verify admin role
+    const admin = await prisma.user.findUnique({
+      where: { id: req.user!.userId }
+    });
+
+    if (!admin || admin.role !== 'admin') {
+      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
+      return;
+    }
+
+    // Find users with active restrictions
+    const usersWithRestrictions = await prisma.user.findMany({
+      where: {
+        restrictionType: { not: null }
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        copyrightStrikes: true,
+        restrictionType: true,
+        restrictionExpiresAt: true,
+        createdAt: true,
+        updatedAt: true,
+        creatorProfile: {
+          select: {
+            id: true,
+            profession: true,
+            bio: true,
+          }
+        }
+      }
+    });
+
+    res.status(200).json(usersWithRestrictions);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
 // Add this controller function
 export const handleGoogleLogin = async (req: Request, res: Response) => {
   const { accessToken } = req.body;
@@ -1213,6 +1385,60 @@ export const handleGetCreatorAnalytics = async (req: AuthRequest, res: Response)
   }
 };
 
+// Handle forgot password request
+const handleForgotPassword = async (req: Request, res: Response) => {
+  const { email } = req.body;
+
+  // Validate required fields
+  if (!email) {
+     res.status(400).json({ error: 'Email is required' });
+  }
+
+  // Simple email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+   res.status(400).json({ error: 'Invalid email format' });
+  }
+
+  try {
+    await requestPasswordReset(email);
+    res.status(200).json({ 
+      message: 'If an account exists with this email, a password reset code has been sent.' 
+    });
+  } catch (error) {
+    // Send success message even if email doesn't exist for security reasons
+    // This prevents email enumeration attacks
+    res.status(200).json({ 
+      message: 'If an account exists with this email, a password reset code has been sent.' 
+    });
+    
+    // But log the actual error for debugging
+    console.error('Password reset error:', (error as Error).message);
+  }
+};
+
+// Handle reset password with code
+const handleResetPassword = async (req: Request, res: Response) => {
+  const { email, resetCode, newPassword } = req.body;
+
+  // Validate required fields
+  if (!email || !resetCode || !newPassword) {
+    res.status(400).json({ error: 'Email, reset code, and new password are required' });
+  }
+
+  // Validate new password
+  if (newPassword.length < 6) {
+     res.status(400).json({ error: 'New password must be at least 6 characters long' });
+  }
+
+  try {
+    const result = await resetPassword(email, resetCode, newPassword);
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
 export { 
   handleRegister, 
   handleLogin, 
@@ -1226,5 +1452,9 @@ export {
   handleFetchPayments,
   handleUpdateOrderStatus,
   handleFetchPaymentsForClient,
-  handleUpdateOrderStatusForClient
+  handleUpdateOrderStatusForClient,
+  handleGetUsersUnderReview,
+  handleGetUsersWithRestrictions,
+  handleForgotPassword,
+  handleResetPassword
 };

@@ -16,7 +16,7 @@ const transporter = nodemailer.createTransport({
   service: 'gmail', // You can use other services like SendGrid or Outlook
   auth: {
     user: '202210258@gordoncollege.edu.ph', // Your email
-    pass: 'etjn pufg svxe bbzt',   // App password or email password
+    pass: 'dwhz hemi nozz jjwh',   // App password or email password
   },
 });
 
@@ -31,6 +31,154 @@ const sendVerificationEmail = async (email: string, verificationCode: string) =>
 
   await transporter.sendMail(mailOptions);
 };
+
+// Function to send notification email
+const sendNotificationEmail = async (email: string, subject: string, message: string) => {
+  const mailOptions = {
+    from: 'your-email@example.com', // Sender's email
+    to: email,                      // Recipient's email
+    subject: subject,
+    html: message,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Notification email sent to ${email}`);
+    return true;
+  } catch (error) {
+    console.error('Failed to send notification email:', error);
+    return false;
+  }
+};
+
+// Create notification in database
+const createNotification = async (
+  userId: number,
+  type: string,
+  title: string,
+  message: string,
+  relatedId?: number,
+  metadata?: any
+) => {
+  try {
+    const notification = await prisma.notification.create({
+      data: {
+        userId,
+        type,
+        title,
+        message,
+        relatedId,
+        metadata: metadata ? JSON.stringify(metadata) : null,
+      },
+    });
+    
+    // Get user email to send notification
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    
+    if (user) {
+      await sendNotificationEmail(user.email, title, message);
+    }
+    
+    return notification;
+  } catch (error) {
+    console.error('Failed to create notification:', error);
+    throw error;
+  }
+};
+
+// Handle copyright strike
+const handleCopyrightStrike = async (userId: number, postId: number, copyrightInfo: any) => {
+  try {
+    // Get current strike count
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { 
+        copyrightStrikes: true, 
+        email: true,
+        firstName: true,
+        lastName: true 
+      },
+    });
+    
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    const newStrikeCount = user.copyrightStrikes + 1;
+    
+    // Update user's copyright strike count
+    await prisma.user.update({
+      where: { id: userId },
+      data: { 
+        copyrightStrikes: newStrikeCount,
+        // If this is the 5th strike, put account under review
+        underReview: newStrikeCount >= 5
+      },
+    });
+    
+    // Create a notification
+    const songInfo = copyrightInfo.songInfo || {};
+    const title = `Copyright Strike #${newStrikeCount}`;
+    let message = `<p>We've detected copyright protected content in your recent post for the song: <strong>${songInfo.title || 'Unknown'}</strong> by <strong>${songInfo.artist || 'Unknown'}</strong>.</p>`;
+    
+    // Add warning based on strike count
+    if (newStrikeCount >= 5) {
+      message += `<p><span style="color: red; font-weight: bold;">WARNING:</span> This is your 5th copyright strike. Your account is now under review by our administrators. During this time, you may experience limited functionality.</p>`;
+    } else {
+      message += `<p>This is strike ${newStrikeCount} out of 5 allowed. After 5 strikes, your account will be placed under review.</p>`;
+    }
+    
+    message += `<p>Please be careful about uploading content that may be protected by copyright. If you believe this is a mistake, please contact our support team.</p>`;
+    
+    await createNotification(
+      userId,
+      'copyright_strike',
+      title,
+      message,
+      postId,
+      { 
+        strikeCount: newStrikeCount,
+        copyrightInfo 
+      }
+    );
+    
+    // If 5 strikes, notify admins
+    if (newStrikeCount >= 5) {
+      // Find admins to notify
+      const admins = await prisma.user.findMany({
+        where: { role: 'admin' },
+        select: { id: true, email: true },
+      });
+      
+      // Notify each admin
+      for (const admin of admins) {
+        const adminMessage = `<p>User ${user.firstName} ${user.lastName} (${user.email}) has received their 5th copyright strike.</p>
+        <p>Their account has been automatically flagged for review. Please review this account and take appropriate action.</p>`;
+        
+        await createNotification(
+          admin.id,
+          'admin_alert',
+          'User Account Review Required',
+          adminMessage,
+          userId,
+          { userId, strikes: newStrikeCount }
+        );
+      }
+    }
+    
+    return {
+      strikes: newStrikeCount,
+      underReview: newStrikeCount >= 5
+    };
+  } catch (error) {
+    console.error('Failed to handle copyright strike:', error);
+    throw error;
+  }
+};
+
 // Register a new user with role
 const registerUser = async (
   email: string,
@@ -42,6 +190,20 @@ const registerUser = async (
   dateOfBirth?: Date,
   role: string = 'user'  // Default role is 'user'
 ) => {
+  // Check if a user with this email already exists
+  const existingUser = await prisma.user.findUnique({ where: { email } });
+
+  // If user exists and is unverified, delete it
+  if (existingUser && !existingUser.verified) {
+    await prisma.user.delete({
+      where: { email }
+    });
+    // Continue with registration after deleting unverified user
+  } else if (existingUser) {
+    // If user exists and is verified, throw an error
+    throw new Error('Email already in use. Please use a different email or login instead.');
+  }
+
   const hashedPassword = await bcrypt.hash(password, 10);
   const verificationCode = generateVerificationCode();
 
@@ -76,6 +238,26 @@ const loginUser = async (email: string, password: string) => {
 
   if (!user.verified) {
     throw new Error('Email not verified. Please verify your email to log in.');
+  }
+
+  // Check if user is suspended
+  if (user.restrictionType === 'suspended') {
+    // Check if suspension has expired
+    if (user.restrictionExpiresAt && new Date() > new Date(user.restrictionExpiresAt)) {
+      // Suspension has expired, remove suspension
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { 
+          restrictionType: null,
+          restrictionExpiresAt: null
+        }
+      });
+    } else {
+      // User is still suspended
+      const expiryDate = user.restrictionExpiresAt ? 
+        ` until ${new Date(user.restrictionExpiresAt).toLocaleDateString()}` : '';
+      throw new Error(`Your account is suspended${expiryDate}. Please contact support for assistance.`);
+    }
   }
 
   const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -307,57 +489,10 @@ const editCreatorProfile = async (
   });
 };
 
-const createPost = async (
-  userId: number,
-  title: string,
-  description: string,
-  detailedDescription?: string,
-  amount?: string, // Accept amount as string from the frontend
-  remarks?: string,
-  image?: string,
-  video?: string,
-  audio?: string // New parameter for audio files
-) => {
-  try {
-    // Convert amount to Float
-    const amountAsFloat = amount ? parseFloat(amount) : null;
-
-    // Check for audio file and run copyright detection if present
-    let copyrightInfo = null;
-    if (audio) {
-      copyrightInfo = await checkAudioCopyright(audio);
-    }
-
-    // Create the new post
-    const newPost = await prisma.post.create({
-      data: {
-        userId,
-        title,
-        description,
-        detailedDescription,
-        amount: amountAsFloat, // Use the converted Float value
-        remarks,
-        image,
-        video,
-        audio, // Add audio field
-        copyrightInfo: copyrightInfo ? JSON.stringify(copyrightInfo) : null // Store copyright info
-      },
-    });
-
-    return newPost;
-  } catch (error: unknown) {
-    // Check if the error is an instance of Error and access the message
-    if (error instanceof Error) {
-      throw new Error(error.message || 'Failed to create post');
-    }
-    throw new Error('An unknown error occurred');
-  }
-};
-
 // Function to check audio copyright using AudD.io API
-const checkAudioCopyright = async (audioFilePath: string): Promise<any> => {
+const checkAudioCopyright = async (audioFilePath: string, userId: number): Promise<any> => {
   try {
-    const AUDD_API_KEY = process.env.AUDD_API_KEY || '4df708e6bbbd879d4c501530c751b0f9'; // Replace with your actual API key
+    const AUDD_API_KEY = process.env.AUDD_API_KEY || '2246f6b0eafc1c3a59fcea1c8242d06b'; // Replace with your actual API key
     const fs = require('fs');
     const FormData = require('form-data');
     const axios = require('axios');
@@ -400,7 +535,7 @@ const checkAudioCopyright = async (audioFilePath: string): Promise<any> => {
 
     // Check if a song was recognized
     if (response.data.result) {
-      return {
+      const copyrightData = {
         isDetected: true,
         songInfo: {
           title: response.data.result.title,
@@ -418,6 +553,11 @@ const checkAudioCopyright = async (audioFilePath: string): Promise<any> => {
           deezer: response.data.result.deezer
         }
       };
+      
+      // Handle copyright strike for the user
+      await handleCopyrightStrike(userId, 0, copyrightData); // We'll update the postId after post creation
+      
+      return copyrightData;
     } else {
       // No copyright detected
       return {
@@ -444,6 +584,101 @@ const checkAudioCopyright = async (audioFilePath: string): Promise<any> => {
   }
 };
 
+const createPost = async (
+  userId: number,
+  title: string,
+  description: string,
+  detailedDescription?: string,
+  amount?: string, // Accept amount as string from the frontend
+  remarks?: string,
+  image?: string,
+  video?: string,
+  audio?: string // New parameter for audio files
+) => {
+  try {
+    // Check if user has restrictions
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { 
+        restrictionType: true,
+        restrictionExpiresAt: true
+      }
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Check if user is restricted from creating posts
+    if (user.restrictionType) {
+      // Check if restriction has expired
+      if (user.restrictionExpiresAt && new Date() > new Date(user.restrictionExpiresAt)) {
+        // Restriction has expired, remove it
+        await prisma.user.update({
+          where: { id: userId },
+          data: { 
+            restrictionType: null,
+            restrictionExpiresAt: null
+          }
+        });
+      } else {
+        // User is still restricted
+        const expiryDate = user.restrictionExpiresAt ? 
+          ` until ${new Date(user.restrictionExpiresAt).toLocaleDateString()}` : '';
+        throw new Error(`You are currently restricted from creating new posts${expiryDate} due to a ${user.restrictionType} on your account. Please contact support for assistance.`);
+      }
+    }
+
+    // Convert amount to Float
+    const amountAsFloat = amount ? parseFloat(amount) : null;
+
+    // Check for audio file and run copyright detection if present
+    let copyrightInfo = null;
+    if (audio) {
+      copyrightInfo = await checkAudioCopyright(audio, userId);
+    }
+
+    // Create the new post
+    const newPost = await prisma.post.create({
+      data: {
+        userId,
+        title,
+        description,
+        detailedDescription,
+        amount: amountAsFloat, // Use the converted Float value
+        remarks,
+        image,
+        video,
+        audio, // Add audio field
+        copyrightInfo: copyrightInfo ? JSON.stringify(copyrightInfo) : null // Store copyright info
+      },
+    });
+    
+    // If copyright was detected, update the post ID in the strike record
+    if (copyrightInfo && copyrightInfo.isDetected) {
+      // Find the notification we just created and update it with correct postId
+      await prisma.notification.updateMany({
+        where: {
+          userId: userId,
+          type: 'copyright_strike',
+          relatedId: 0 // Temporary ID we used earlier
+        },
+        data: {
+          relatedId: newPost.id
+        }
+      });
+    }
+
+    return newPost;
+  } catch (error: unknown) {
+    // Check if the error is an instance of Error and access the message
+    if (error instanceof Error) {
+      throw new Error(error.message || 'Failed to create post');
+    }
+    throw new Error('An unknown error occurred');
+  }
+};
+
 // authUtils.ts
 export const updatePost = async (
   postId: number,
@@ -460,7 +695,11 @@ export const updatePost = async (
     // Get the existing post to check if audio has changed
     const existingPost = await prisma.post.findUnique({
       where: { id: postId },
-      select: { audio: true, copyrightInfo: true }
+      select: { 
+        audio: true, 
+        copyrightInfo: true,
+        userId: true // Get user ID for copyright notifications
+      }
     });
 
     if (!existingPost) {
@@ -471,9 +710,24 @@ export const updatePost = async (
     let copyrightInfo = existingPost.copyrightInfo;
     if (audio && audio !== existingPost.audio) {
       // Audio file has been updated, check for copyright
-      copyrightInfo = await checkAudioCopyright(audio);
+      const copyrightData = await checkAudioCopyright(audio, existingPost.userId);
       // Convert copyright info to string for storage
-      copyrightInfo = copyrightInfo ? JSON.stringify(copyrightInfo) : null;
+      copyrightInfo = copyrightData ? JSON.stringify(copyrightData) : null;
+      
+      // If copyright was detected, update the strike record with correct postId
+      if (copyrightData && copyrightData.isDetected) {
+        // Find the notification we just created and update it with correct postId
+        await prisma.notification.updateMany({
+          where: {
+            userId: existingPost.userId,
+            type: 'copyright_strike',
+            relatedId: 0 // Temporary ID we used earlier
+          },
+          data: {
+            relatedId: postId
+          }
+        });
+      }
     }
 
     const updatedPost = await prisma.post.update({
@@ -499,6 +753,7 @@ export const updatePost = async (
     throw new Error('Failed to update post: Unknown error');
   }
 };
+
 // authUtils.ts
 export const deletePost = async (postId: number) => {
   try {
@@ -1245,6 +1500,298 @@ export const getCreatorAnalytics = async (creatorId: number, startDate?: string,
   }
 };
 
+// Get user notifications
+export const getUserNotifications = async (userId: number, limit = 20, offset = 0, includeRead = false) => {
+  try {
+    const where = {
+      userId,
+      ...(includeRead ? {} : { read: false })
+    };
+    
+    const notifications = await prisma.notification.findMany({
+      where,
+      orderBy: {
+        createdAt: 'desc'
+      },
+      skip: offset,
+      take: limit
+    });
+    
+    const totalCount = await prisma.notification.count({ where });
+    
+    return {
+      notifications,
+      totalCount,
+      unreadCount: includeRead 
+        ? await prisma.notification.count({ where: { userId, read: false } }) 
+        : totalCount
+    };
+  } catch (error) {
+    console.error('Failed to fetch notifications:', error);
+    throw new Error('Failed to fetch notifications');
+  }
+};
+
+// Mark notification as read
+export const markNotificationAsRead = async (notificationId: number, userId: number) => {
+  try {
+    const notification = await prisma.notification.findFirst({
+      where: {
+        id: notificationId,
+        userId: userId // Ensure the notification belongs to the user
+      }
+    });
+    
+    if (!notification) {
+      throw new Error('Notification not found or does not belong to user');
+    }
+    
+    return await prisma.notification.update({
+      where: { id: notificationId },
+      data: { read: true }
+    });
+  } catch (error) {
+    console.error('Failed to mark notification as read:', error);
+    throw new Error('Failed to update notification');
+  }
+};
+
+// Mark all notifications as read
+export const markAllNotificationsAsRead = async (userId: number) => {
+  try {
+    const result = await prisma.notification.updateMany({
+      where: {
+        userId: userId,
+        read: false
+      },
+      data: { read: true }
+    });
+    
+    return { count: result.count };
+  } catch (error) {
+    console.error('Failed to mark all notifications as read:', error);
+    throw new Error('Failed to update notifications');
+  }
+};
+
+// Admin function to review user after copyright strikes
+export const reviewUserCopyrightStatus = async (adminId: number, userId: number, action: 'clear' | 'warn' | 'suspend' | 'unsuspend', duration?: number) => {
+  try {
+    // Verify admin permissions
+    const admin = await prisma.user.findUnique({
+      where: { id: adminId },
+      select: { role: true }
+    });
+    
+    if (!admin || admin.role !== 'admin') {
+      throw new Error('Unauthorized: Only admins can perform this action');
+    }
+    
+    // Get user data
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { 
+        email: true, 
+        firstName: true,
+        lastName: true,
+        copyrightStrikes: true,
+        role: true
+      }
+    });
+    
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    let updates: any = {
+      underReview: false // Clear review flag regardless of action
+    };
+    
+    let notificationTitle = '';
+    let notificationMessage = '';
+    let expiryDate = null;
+    
+    // Calculate expiry date if duration is provided
+    if (duration && (action === 'warn' || action === 'suspend')) {
+      expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + duration);
+      updates.restrictionExpiresAt = expiryDate;
+    }
+    
+    switch (action) {
+      case 'clear':
+        updates.copyrightStrikes = 0; // Reset strike count
+        updates.restrictionExpiresAt = null; // Clear any existing restrictions
+        updates.restrictionType = null; // Clear restriction type
+        notificationTitle = 'Copyright Strikes Cleared';
+        notificationMessage = `<p>After reviewing your account, our administration team has cleared your copyright strikes.</p>
+        <p>Your account is now in good standing. Thank you for your cooperation.</p>`;
+        break;
+        
+      case 'warn':
+        // Keep current strikes but update warning status
+        updates.restrictionType = 'warning';
+        notificationTitle = 'Account Review Completed - Warning';
+        notificationMessage = `<p>After reviewing your account, our administration team has issued a warning.</p>
+        <p>Your copyright strikes remain on record, but your account has been restored to normal operation with restrictions.</p>
+        <p>This warning will remain on your account for ${duration} days (until ${expiryDate?.toLocaleDateString()}).</p>
+        <p>During this period, you will not be able to create new posts.</p>
+        <p>Please be careful about uploading content that may be protected by copyright.</p>`;
+        break;
+        
+      case 'suspend':
+        // Note: we don't change the role, just mark them as suspended
+        updates.restrictionType = 'suspended';
+        notificationTitle = 'Account Suspended';
+        notificationMessage = `<p>After reviewing your account and its ${user.copyrightStrikes} copyright violations, our administration team has suspended your account.</p>
+        <p>This suspension will last for ${duration} days (until ${expiryDate?.toLocaleDateString()}).</p>
+        <p>During this period, you will not be able to log in or use any TuneUp features.</p>
+        <p>This decision is due to repeated copyright infringement. If you believe this is a mistake, please contact our support team.</p>`;
+        
+        // Mark all user's posts as rejected
+        await prisma.post.updateMany({
+          where: { userId: userId },
+          data: { status: 'rejected' }
+        });
+        break;
+        
+      case 'unsuspend':
+        // Clear any restrictions
+        updates.restrictionType = null;
+        updates.restrictionExpiresAt = null;
+        
+        notificationTitle = 'Account Restriction Removed';
+        notificationMessage = `<p>Good news! Your account restrictions have been removed by our administration team.</p>
+        <p>Your account is now in good standing, and all features have been restored.</p>
+        <p>Thank you for your cooperation and understanding.</p>`;
+        break;
+        
+      default:
+        throw new Error('Invalid action specified');
+    }
+    
+    // Update user
+    await prisma.user.update({
+      where: { id: userId },
+      data: updates
+    });
+    
+    // Create notification for user
+    await createNotification(
+      userId,
+      'account_review',
+      notificationTitle,
+      notificationMessage,
+      undefined,
+      { action, adminId, expiryDate: expiryDate?.toISOString() }
+    );
+    
+    return { 
+      success: true, 
+      action,
+      expiryDate: expiryDate?.toISOString() 
+    };
+  } catch (error) {
+    console.error('Failed to review user:', error);
+    if (error instanceof Error) {
+      throw new Error(`Failed to review user: ${error.message}`);
+    }
+    throw new Error('Failed to review user: Unknown error');
+  }
+};
+
+// Function to generate a reset code for password reset
+const generateResetCode = (): string => {
+  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+};
+
+// Function to send password reset email
+const sendPasswordResetEmail = async (email: string, resetCode: string) => {
+  const mailOptions = {
+    from: 'your-email@example.com',
+    to: email,
+    subject: 'Password Reset Code',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1877f2;">TuneUp - Password Reset</h2>
+        <p>You requested to reset your password. Use the code below to complete the process:</p>
+        <div style="background-color: #f0f2f5; padding: 10px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; border-radius: 4px;">
+          ${resetCode}
+        </div>
+        <p>This code will expire in 15 minutes.</p>
+        <p>If you did not request a password reset, please ignore this email or contact support if you have concerns.</p>
+        <p>Thank you,<br>TuneUp Team</p>
+      </div>
+    `,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+// Function to request password reset
+const requestPasswordReset = async (email: string) => {
+  // Check if user exists
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    throw new Error('No account found with this email address');
+  }
+
+  // Generate reset code and set expiry (15 minutes from now)
+  const resetCode = generateResetCode();
+  const resetCodeExpiry = new Date();
+  resetCodeExpiry.setMinutes(resetCodeExpiry.getMinutes() + 15);
+
+  // Update user with reset code
+  await prisma.user.update({
+    where: { email },
+    data: {
+      resetCode,
+      resetCodeExpiry,
+    },
+  });
+
+  // Send reset email
+  await sendPasswordResetEmail(email, resetCode);
+
+  return { message: 'Password reset instructions sent to your email' };
+};
+
+// Function to verify reset code and update password
+const resetPassword = async (email: string, resetCode: string, newPassword: string) => {
+  // Find user by email
+  const user = await prisma.user.findUnique({ where: { email } });
+  
+  // Check if user exists
+  if (!user) {
+    throw new Error('No account found with this email address');
+  }
+
+  // Check if reset code exists and matches
+  if (!user.resetCode || user.resetCode !== resetCode) {
+    throw new Error('Invalid reset code');
+  }
+
+  // Check if reset code is expired
+  if (!user.resetCodeExpiry || new Date() > user.resetCodeExpiry) {
+    throw new Error('Reset code has expired. Please request a new one');
+  }
+
+  // Hash new password
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+  // Update user's password and clear reset code
+  await prisma.user.update({
+    where: { email },
+    data: {
+      password: hashedPassword,
+      resetCode: null,
+      resetCodeExpiry: null,
+    },
+  });
+
+  return { message: 'Password has been reset successfully' };
+};
+
 export { registerUser, 
   loginUser, fetchProfile, 
   updateUserProfile, prisma, 
@@ -1252,4 +1799,9 @@ export { registerUser,
   updateCreatorLevel,
   editCreatorProfile,
   createPost,
+  createNotification,
+  generateResetCode,
+  sendPasswordResetEmail,
+  requestPasswordReset,
+  resetPassword
 };
