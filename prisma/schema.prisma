@@ -42,6 +42,11 @@ model User {
   underReview      Boolean     @default(false) // Flag for accounts under admin review
   restrictionType  String?     // Type of restriction: 'warning' or 'suspended'
   restrictionExpiresAt DateTime? // When the restriction expires
+  
+  // Report relations
+  submittedReports Report[] @relation("UserReports") // Reports submitted by this user
+  receivedReports  Report[] @relation("ReportedUsers") // Reports against this user
+  handledReports   Report[] @relation("ReportAdmin") // Reports handled by this admin
 }
 
 model CreatorProfile {
@@ -55,6 +60,13 @@ model CreatorProfile {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   isVerified       Boolean  @default(false)
+  verificationRequested Boolean @default(false) // Whether verification has been requested
+  validIdDocument  String? // Path to ID document
+  verificationReason String? // Reason for requesting verification
+  verificationRequestedAt DateTime? // When verification was requested
+  verificationReviewedAt DateTime? // When verification was reviewed
+  verificationReviewedBy Int? // Admin who reviewed the verification
+  rejectionReason  String? // Reason for rejection if not verified
   creatorLevel     Float    @default(0.0) // Rating from 0 to 5, based on engagement and ratings
   portfolioFile    String?  // Store the file path
   resumeFile       String?  // Store the file path
@@ -199,30 +211,39 @@ model Notification {
   user        User     @relation(fields: [userId], references: [id])
 }
 
-// New model for app-wide analytics
-model AppAnalytics {
-  id                  Int       @id @default(autoincrement())
-  date                String    // Date in YYYY-MM-DD format
-  totalTransactions   Int       @default(0) // Total number of transactions
-  totalAmount         Int       @default(0) // Total amount processed in the smallest unit (e.g., cents)
-  adminRevenue        Int       @default(0) // Admin revenue (20% of transactions)
-  userCount           Int       @default(0) // Total user count
-  newUserCount        Int       @default(0) // New users registered on this date
-  activeUserCount     Int       @default(0) // Users who were active on this date
-  postCount           Int       @default(0) // Total posts
-  newPostCount        Int       @default(0) // New posts created on this date
-  engagementCount     Int       @default(0) // Total engagements (views, plays, etc.)
-  messageCount        Int       @default(0) // Total messages exchanged
-  copyrightStrikes    Int       @default(0) // Copyright strikes issued
-  averageRating       Float?    // Average rating across all creators
-  conversionRate      Float?    // Percentage of post views that lead to transactions
-  topCreators         String?   @db.Text // JSON array of top performing creators
-  topPosts            String?   @db.Text // JSON array of top performing posts
-  deviceStats         String?   @db.Text // JSON with device usage breakdown
-  metricBreakdown     String?   @db.Text // Detailed breakdown of various metrics as JSON
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  
-  @@unique([date]) // Only one record per day
+// Add AppSettings model for app configuration including fee percentage
+model AppSettings {
+  id            Int      @id @default(autoincrement())
+  key           String   @unique // Key for the setting (e.g., "feePercentage")
+  value         String   // Value of the setting as string (can be parsed to appropriate type)
+  description   String?  // Description of what the setting does
+  feePercentage Float    @default(20.0) // Default fee percentage (20%)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastUpdatedBy Int? // Admin who last updated the setting
 }
+
+// After the Notification model, add a new Report model
+
+model Report {
+  id               Int       @id @default(autoincrement())
+  reporterId       Int       // User who created the report
+  reportedUserId   Int       // User being reported
+  reason           String    // Short reason for the report
+  details          String    @db.Text // Detailed description of the issue
+  category         String    // Type of report (e.g., "harassment", "copyright", "inappropriate")
+  evidenceImage    String?   // Path to uploaded evidence image
+  status           String    // "pending", "reviewing", "resolved", "dismissed"
+  adminComment     String?   @db.Text // Admin notes on the report
+  adminId          Int?      // Admin who handled the report
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  resolvedAt       DateTime? // When the report was resolved
+
+  reporter         User      @relation("UserReports", fields: [reporterId], references: [id])
+  reportedUser     User      @relation("ReportedUsers", fields: [reportedUserId], references: [id])
+  admin            User?     @relation("ReportAdmin", fields: [adminId], references: [id])
+}
+
+
 

@@ -29,7 +29,10 @@ import {
   trackClickThrough,
   getCreatorAnalytics,
   requestPasswordReset,
-  resetPassword
+  resetPassword,
+  applyForVerification,
+  reviewCreatorVerification,
+  getPendingVerificationRequests
 } from '../utils/authUtils';
 import { checkPaymentStatus } from '../utils/authUtils';
 import { JWT_SECRET } from '../middleware/authMiddleware';
@@ -1439,6 +1442,98 @@ const handleResetPassword = async (req: Request, res: Response) => {
   }
 };
 
+// Handle creator verification application
+const handleApplyForVerification = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId;
+    const { reason } = req.body;
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    
+    if (!files?.validId || !files.validId[0]) {
+      res.status(400).json({ error: 'Valid ID document is required' });
+      return;
+    }
+    
+    const validIdDocument = files.validId[0].filename;
+    
+    const result = await applyForVerification(
+      userId,
+      validIdDocument,
+      reason
+    );
+    
+    res.status(200).json({
+      message: 'Verification application submitted successfully',
+      result
+    });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Handle admin verification of creators
+const handleReviewCreatorVerification = async (req: AuthRequest, res: Response) => {
+  try {
+    const adminId = req.user!.userId;
+    const { creatorProfileId, approve, rejectionReason } = req.body;
+    
+    if (!creatorProfileId) {
+      res.status(400).json({ error: 'Creator profile ID is required' });
+      return;
+    }
+    
+    // Make sure approve is a boolean
+    if (typeof approve !== 'boolean') {
+      res.status(400).json({ error: 'Approve must be a boolean value' });
+      return;
+    }
+    
+    // If rejecting, require a reason
+    if (!approve && !rejectionReason) {
+      res.status(400).json({ error: 'Rejection reason is required when rejecting a verification request' });
+      return;
+    }
+    
+    const result = await reviewCreatorVerification(
+      adminId,
+      parseInt(creatorProfileId),
+      approve,
+      rejectionReason
+    );
+    
+    res.status(200).json({
+      message: approve ? 'Creator verified successfully' : 'Verification request rejected',
+      result
+    });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
+// Handle getting pending verification requests (admin only)
+const handleGetPendingVerifications = async (req: AuthRequest, res: Response) => {
+  try {
+    // Verify admin role
+    const admin = await prisma.user.findUnique({
+      where: { id: req.user!.userId }
+    });
+    
+    if (!admin || admin.role !== 'admin') {
+      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
+      return;
+    }
+    
+    const pendingRequests = await getPendingVerificationRequests();
+    
+    res.status(200).json({
+      count: pendingRequests.length,
+      pendingRequests
+    });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+};
+
 export { 
   handleRegister, 
   handleLogin, 
@@ -1456,5 +1551,8 @@ export {
   handleGetUsersUnderReview,
   handleGetUsersWithRestrictions,
   handleForgotPassword,
-  handleResetPassword
+  handleResetPassword,
+  handleApplyForVerification,
+  handleReviewCreatorVerification,
+  handleGetPendingVerifications
 };

@@ -1792,6 +1792,175 @@ const resetPassword = async (email: string, resetCode: string, newPassword: stri
   return { message: 'Password has been reset successfully' };
 };
 
+// Function to apply for creator verification
+const applyForVerification = async (
+  userId: number,
+  validIdDocument: string,
+  reason?: string
+) => {
+  try {
+    // Check if user is a creator
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { creatorProfile: true }
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    if (user.role !== 'creator' || !user.creatorProfile) {
+      throw new Error('Only creators can apply for verification');
+    }
+
+    // Check if creator has already applied or is already verified
+    if (user.creatorProfile.isVerified) {
+      throw new Error('Creator is already verified');
+    }
+
+    // Update creator profile with verification request
+    const updatedProfile = await prisma.creatorProfile.update({
+      where: { userId },
+      data: {
+        verificationRequested: true,
+        validIdDocument,
+        verificationReason: reason || 'Creator verification requested',
+        verificationRequestedAt: new Date()
+      },
+    });
+
+    // Notify all admins about the verification request
+    const admins = await prisma.user.findMany({
+      where: { role: 'admin' },
+      select: { id: true }
+    });
+
+    for (const admin of admins) {
+      await createNotification(
+        admin.id,
+        'verification_request',
+        'New Creator Verification Request',
+        `<p>Creator ${user.firstName} ${user.lastName} has requested verification.</p>
+         <p>Please review their documents and approve or reject this request.</p>`,
+        userId,
+        { creatorId: userId, profileId: user.creatorProfile.id }
+      );
+    }
+
+    return updatedProfile;
+  } catch (error) {
+    console.error('Error applying for verification:', error);
+    throw error;
+  }
+};
+
+// Function for admin to review and verify a creator
+const reviewCreatorVerification = async (
+  adminId: number,
+  creatorProfileId: number,
+  approve: boolean,
+  rejectionReason?: string
+) => {
+  try {
+    // Verify admin permissions
+    const admin = await prisma.user.findUnique({
+      where: { id: adminId },
+      select: { role: true }
+    });
+    
+    if (!admin || admin.role !== 'admin') {
+      throw new Error('Unauthorized: Only admins can verify creators');
+    }
+    
+    // Get creator profile
+    const creatorProfile = await prisma.creatorProfile.findUnique({
+      where: { id: creatorProfileId },
+      include: { user: true }
+    });
+    
+    if (!creatorProfile) {
+      throw new Error('Creator profile not found');
+    }
+    
+    // Update verification status
+    const updatedProfile = await prisma.creatorProfile.update({
+      where: { id: creatorProfileId },
+      data: {
+        isVerified: approve,
+        verificationRequested: false,
+        verificationReviewedAt: new Date(),
+        verificationReviewedBy: adminId,
+        rejectionReason: !approve ? rejectionReason : null
+      }
+    });
+    
+    // Create notification for creator
+    const notificationTitle = approve ? 
+      'Verification Approved!' : 
+      'Verification Request Rejected';
+    
+    const notificationMessage = approve ?
+      `<p>Congratulations! Your verification request has been approved. Your creator profile is now verified.</p>
+       <p>Verified creators receive priority in search results and a verification badge on their profiles.</p>` :
+      `<p>We're sorry, but your verification request has been rejected.</p>
+       <p>Reason: ${rejectionReason || 'No reason provided'}</p>
+       <p>You may submit a new verification request after addressing the issues mentioned.</p>`;
+    
+    await createNotification(
+      creatorProfile.userId,
+      'verification_review',
+      notificationTitle,
+      notificationMessage,
+      adminId,
+      { approved: approve, reviewedBy: adminId }
+    );
+    
+    return {
+      profile: updatedProfile,
+      approved: approve
+    };
+  } catch (error) {
+    console.error('Error reviewing verification:', error);
+    throw error;
+  }
+};
+
+// Function to get pending verification requests (for admin)
+const getPendingVerificationRequests = async () => {
+  try {
+    const pendingRequests = await prisma.creatorProfile.findMany({
+      where: {
+        verificationRequested: true,
+        isVerified: false
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            profilePicture: true,
+            createdAt: true
+          },
+          include: {
+            creatorProfile: true,
+            posts: true
+          }
+        }
+      },
+      orderBy: {
+        verificationRequestedAt: 'asc' // Oldest first
+      }
+    });
+    
+    return pendingRequests;
+  } catch (error) {
+    console.error('Error fetching verification requests:', error);
+    throw error;
+  }
+};
+
 export { registerUser, 
   loginUser, fetchProfile, 
   updateUserProfile, prisma, 
@@ -1803,5 +1972,8 @@ export { registerUser,
   generateResetCode,
   sendPasswordResetEmail,
   requestPasswordReset,
-  resetPassword
+  resetPassword,
+  applyForVerification,
+  reviewCreatorVerification,
+  getPendingVerificationRequests
 };

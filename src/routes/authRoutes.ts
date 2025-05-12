@@ -33,13 +33,17 @@ import {
   handleGetUsersUnderReview,
   handleGetUsersWithRestrictions,
   handleForgotPassword,
-  handleResetPassword
+  handleResetPassword,
+  handleApplyForVerification,
+  handleReviewCreatorVerification,
+  handleGetPendingVerifications
 } from '../controllers/authController';
 import { authenticateToken } from '../middleware/authMiddleware';
 import { sendMessage, fetchMessages, getUsersWithChatHistory } from '../controllers/chatController';
 import analyticsController from '../controllers/analyticsController';
 import notificationController from '../controllers/notificationController';
 import adminAnalyticsController from '../controllers/adminAnalyticsController';
+import reportingController from '../controllers/reportingController';
 
 const authRouter = express.Router();
 
@@ -93,6 +97,13 @@ authRouter.post('/rate', authenticateToken, handleSubmitRating);
 authRouter.get('/ratings', authenticateToken, handleGetCreatorRatings);
 authRouter.get('/ratings/:creatorId', authenticateToken, handleGetCreatorRatingsByCreatorId);
 
+// Creator verification routes
+authRouter.post('/verification/apply', authenticateToken, upload.fields([
+  { name: 'validId', maxCount: 1 }
+]), handleApplyForVerification);
+authRouter.get('/admin/verifications', authenticateToken, handleGetPendingVerifications);
+authRouter.post('/admin/verifications/review', authenticateToken, handleReviewCreatorVerification);
+
 // Notification routes
 authRouter.get('/notifications', authenticateToken, notificationController.handleGetNotifications);
 authRouter.put('/notifications/:notificationId/read', authenticateToken, notificationController.handleMarkNotificationAsRead);
@@ -115,15 +126,22 @@ authRouter.get('/admin/users/restricted', authenticateToken, handleGetUsersWithR
 authRouter.put('/admin/copyright-review', authenticateToken, notificationController.handleReviewUserCopyrightStatus);
 
 // Admin analytics routes
-authRouter.get('/admin/analytics/overview', authenticateToken, adminAnalyticsController.getAppOverview);
-authRouter.get('/admin/analytics/transactions', authenticateToken, adminAnalyticsController.getTransactionDetails);
-authRouter.post('/admin/analytics/claim-fees', authenticateToken, adminAnalyticsController.claimAdminFees);
-authRouter.get('/admin/analytics/daily', authenticateToken, adminAnalyticsController.generateDailyAnalytics);
-authRouter.get('/admin/analytics/range', authenticateToken, adminAnalyticsController.getAnalyticsRange);
-authRouter.put('/admin/analytics/fee/:paymentId', authenticateToken, adminAnalyticsController.updateAdminFee);
-authRouter.post('/admin/analytics/schedule', authenticateToken, adminAnalyticsController.runScheduledAnalytics);
+authRouter.get('/admin/analytics/revenue', authenticateToken, adminAnalyticsController.getRevenueAnalytics);
+authRouter.get('/admin/analytics/users', authenticateToken, adminAnalyticsController.getUserGrowthAnalytics);
+authRouter.get('/admin/analytics/creators', authenticateToken, adminAnalyticsController.getCreatorPerformance);
+authRouter.get('/admin/analytics/content', authenticateToken, adminAnalyticsController.getContentPerformance);
+authRouter.get('/admin/settings/fee', authenticateToken, adminAnalyticsController.getCurrentFeePercentage);
+authRouter.put('/admin/settings/fee', authenticateToken, adminAnalyticsController.updateFeePercentage);
+authRouter.post('/admin/claim-fees', authenticateToken, adminAnalyticsController.claimFees);
 
 // Add this route
 authRouter.post('/google-login', handleGoogleLogin);
+
+// After the admin analytics routes, add reporting routes
+authRouter.post('/report-user', authenticateToken, upload.single('evidenceImage'), reportingController.submitReport);
+authRouter.get('/admin/reports', authenticateToken, reportingController.getReports);
+authRouter.get('/admin/reports/:reportId', authenticateToken, reportingController.getReportDetails);
+authRouter.put('/admin/reports/:reportId', authenticateToken, reportingController.updateReportStatus);
+authRouter.delete('/admin/reports/:reportId', authenticateToken, reportingController.deleteReport);
 
 export { authRouter };

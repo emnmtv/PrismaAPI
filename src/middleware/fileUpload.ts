@@ -9,6 +9,10 @@ const storage = multer.diskStorage({
       cb(null, 'uploads/documents/');
     } else if (_file.fieldname === 'audio') {
       cb(null, 'uploads/audio/');
+    } else if (_file.fieldname === 'evidenceImage') {
+      cb(null, 'uploads/reports/');
+    } else if (_file.fieldname === 'validId') {
+      cb(null, 'uploads/verification/');
     } else {
       cb(null, 'uploads/');
     }
@@ -40,6 +44,13 @@ const fileFilter = (_req: any, file: any, cb: any) => {
     } else {
       cb(new Error('Resume must be PDF or DOC file'), false);
     }
+  } else if (file.fieldname === 'validId') {
+    // Allow only image files for ID verification
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Valid ID must be an image file (JPG, PNG, etc.)'), false);
+    }
   } else if (file.fieldname === 'audio') {
     // Allow common audio formats
     if (file.mimetype === 'audio/mpeg' || // MP3
@@ -52,6 +63,13 @@ const fileFilter = (_req: any, file: any, cb: any) => {
       cb(null, true);
     } else {
       cb(new Error('Only audio files (MP3, WAV, OGG, FLAC, AAC) are allowed'), false);
+    }
+  } else if (file.fieldname === 'evidenceImage') {
+    // Allow image formats for report evidence
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Evidence must be an image file (JPG, PNG, etc.)'), false);
     }
   } else {
     // For other files (like images and videos), accept all
@@ -73,6 +91,24 @@ const audioUpload = multer({
   },
 });
 
+// Create a specific upload configuration for report evidence
+const reportUpload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit for report evidence
+  },
+});
+
+// Create a specific upload configuration for ID verification
+const verificationUpload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit for ID documents
+  },
+});
+
 // Standard upload configuration for other files
 const standardUpload = multer({
   storage,
@@ -83,12 +119,24 @@ const standardUpload = multer({
 // Function to select the right upload configuration based on field name
 const upload = {
   fields: (fields: { name: string, maxCount?: number }[]) => {
-    // Check if any field is for audio
+    // Check if any field is for audio, report evidence, or verification
     const hasAudioField = fields.some(field => field.name === 'audio');
+    const hasReportField = fields.some(field => field.name === 'evidenceImage');
+    const hasVerificationField = fields.some(field => field.name === 'validId');
     
     // If uploading audio, use the more restrictive size limit
     if (hasAudioField) {
       return audioUpload.fields(fields);
+    }
+    
+    // If uploading report evidence, use the report upload config
+    if (hasReportField) {
+      return reportUpload.fields(fields);
+    }
+    
+    // If uploading verification documents, use the verification upload config
+    if (hasVerificationField) {
+      return verificationUpload.fields(fields);
     }
     
     // Otherwise use standard upload
@@ -97,6 +145,10 @@ const upload = {
   single: (fieldName: string) => {
     if (fieldName === 'audio') {
       return audioUpload.single(fieldName);
+    } else if (fieldName === 'evidenceImage') {
+      return reportUpload.single(fieldName);
+    } else if (fieldName === 'validId') {
+      return verificationUpload.single(fieldName);
     }
     return standardUpload.single(fieldName);
   },

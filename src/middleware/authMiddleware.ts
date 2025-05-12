@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { AuthRequest } from './authRequest';
 
 export const JWT_SECRET = 'your_jwt_secret';
 
@@ -23,8 +24,14 @@ const authenticateToken = (
       res.status(403).json({ error: 'Invalid or expired token.' });
       return; // Exit the callback
     }
-    // Optionally, if you have extended the Request type to include a 'user' property:
-    (req as any).user = user; // Or, if you have declared a proper type augmentation, simply: req.user = user;
+    
+    // Use the AuthRequest interface to type the request
+    (req as AuthRequest).user = {
+      userId: (user as any).userId,
+      role: (user as any).role, // Include role from the token
+      email: (user as any).email // Include email from the token
+    };
+    
     next(); // Proceed to the next middleware or route handler
   });
 };

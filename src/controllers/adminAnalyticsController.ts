@@ -1,474 +1,421 @@
 import { Response } from 'express';
-import { AuthRequest } from '@/middleware/authRequest';
 import { PrismaClient } from '@prisma/client';
-import { createNotification } from '../utils/authUtils';
+import { AuthRequest } from '../middleware/authRequest';
 
 const prisma = new PrismaClient();
 
-// Helper to format currency amounts for display (converts from cents to dollars)
-const formatCurrency = (amount: number): string => {
-  return `$${(amount / 100).toFixed(2)}`;
+// Helper function to check if user is admin
+const isAdmin = async (userId: number): Promise<boolean> => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true }
+  });
+  return user?.role === 'admin';
 };
 
-// Calculate admin fee (20% of transaction amount)
-const calculateAdminFee = (amount: number): number => {
-  return Math.floor(amount * 0.20); // 20% of the amount
-};
-
-// Get app overview stats
-export const getAppOverview = async (req: AuthRequest, res: Response): Promise<void> => {
+// Get app revenue analytics
+const getRevenueAnalytics = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // Verify admin role
-    const admin = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
-      select: { role: true }
-    });
-
-    if (!admin || admin.role !== 'admin') {
-      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
       return;
     }
 
-    // Get total users count by role
-    const userCounts = await prisma.user.groupBy({
-      by: ['role'],
-      _count: {
-        id: true
-      }
-    });
+    // Check if user is admin
+    const admin = await isAdmin(userId);
+    if (!admin) {
+      res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+      return;
+    }
 
-    // Format user counts into an object
-    const users = userCounts.reduce((acc, curr) => {
-      acc[curr.role] = curr._count.id;
-      return acc;
-    }, {} as Record<string, number>);
+    // Parse date range parameters
+    const { startDate, endDate, groupBy = 'day', includeTransactions = 'false' } = req.query;
+    const start = startDate ? new Date(startDate as string) : new Date(new Date().setDate(new Date().getDate() - 30));
+    const end = endDate ? new Date(endDate as string) : new Date();
 
-    // Get total users count
-    const totalUsers = await prisma.user.count();
-
-    // Get total transactions and amount
-    const transactions = await prisma.payment.aggregate({
-      where: {
-        status: 'paid'
-      },
-      _count: {
-        id: true
-      },
-      _sum: {
-        amount: true,
-        adminFee: true
-      }
-    });
-
-    // Get posts count by status
-    const postCounts = await prisma.post.groupBy({
-      by: ['status'],
-      _count: {
-        id: true
-      }
-    });
-
-    // Format post counts into an object
-    const posts = postCounts.reduce((acc, curr) => {
-      acc[curr.status] = curr._count.id;
-      return acc;
-    }, {} as Record<string, number>);
-
-    // Get total posts count
-    const totalPosts = await prisma.post.count();
-
-    // Get total engagements
-    const engagements = await prisma.engagement.count();
-
-    // Get total messages
-    const messages = await prisma.message.count();
-
-    // Get creators with copyright strikes
-    const creatorsWithStrikes = await prisma.user.count({
-      where: {
-        copyrightStrikes: { gt: 0 }
-      }
-    });
-
-    // Get current active users (last 30 days)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    const activeUsers = await prisma.user.count({
-      where: {
-        updatedAt: { gte: thirtyDaysAgo }
-      }
-    });
-
-    // Get current active creators (with at least one post)
-    const activeCreators = await prisma.user.count({
-      where: {
-        role: 'creator',
-        posts: {
-          some: {}
-        }
-      }
-    });
-
-    // Get average rating across all creators
-    const ratings = await prisma.rating.aggregate({
-      _avg: {
-        rating: true
-      }
-    });
-
-    // Calculate admin revenue (20% of total transactions)
-    const totalAmount = transactions._sum?.amount || 0;
-    const claimedAdminRevenue = transactions._sum?.adminFee || 0;
-    
-    // Get unclaimed admin fees
-    const unclaimedFees = await prisma.payment.aggregate({
+    // Get all completed payments with admin fees
+    const payments = await prisma.payment.findMany({
       where: {
         status: 'paid',
-        isFeeClaimed: false
+        createdAt: {
+          gte: start,
+          lte: end
+        }
       },
-      _sum: {
-        amount: true
+      select: {
+        id: true,
+        amount: true,
+        adminFee: true,
+        isFeeClaimed: true,
+        createdAt: true,
+        status: true,
+        orderStatus: true,
+        referenceNumber: true,
+        userId: true,
+        clientId: true
       }
     });
-    
-    const potentialAdminRevenue = calculateAdminFee((unclaimedFees._sum?.amount) || 0);
 
-    // Build the response object
-    const overview = {
-      users: {
-        total: totalUsers,
-        byRole: users,
-        active: activeUsers,
-        activeCreators
-      },
-      transactions: {
-        count: transactions._count?.id || 0,
-        totalAmount: formatCurrency(totalAmount),
-        rawAmount: totalAmount,
-      },
-      adminRevenue: {
-        total: formatCurrency(claimedAdminRevenue),
-        rawTotal: claimedAdminRevenue,
-        unclaimed: formatCurrency(potentialAdminRevenue),
-        rawUnclaimed: potentialAdminRevenue,
-        potential: formatCurrency(claimedAdminRevenue + potentialAdminRevenue),
-        rawPotential: claimedAdminRevenue + potentialAdminRevenue
-      },
-      posts: {
-        total: totalPosts,
-        byStatus: posts
-      },
-      engagement: {
-        total: engagements,
-        messages,
-        averageRating: ratings._avg.rating || 0
-      },
-      copyrightStrikes: creatorsWithStrikes
+    // Calculate totals
+    const totalTransactions = payments.length;
+    const totalRevenue = payments.reduce((sum, payment) => sum + (payment.adminFee || 0), 0);
+    const claimedRevenue = payments
+      .filter(p => p.isFeeClaimed)
+      .reduce((sum, payment) => sum + (payment.adminFee || 0), 0);
+    const unclaimedRevenue = totalRevenue - claimedRevenue;
+
+    // Group data by date according to groupBy parameter
+    const revenueByDate: Record<string, { date: string, revenue: number, transactions: number }> = {};
+
+    payments.forEach(payment => {
+      let dateKey: string;
+      const date = new Date(payment.createdAt);
+      
+      if (groupBy === 'month') {
+        dateKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+      } else if (groupBy === 'year') {
+        dateKey = date.getFullYear().toString();
+      } else { // day is default
+        dateKey = date.toISOString().split('T')[0];
+      }
+
+      if (!revenueByDate[dateKey]) {
+        revenueByDate[dateKey] = { date: dateKey, revenue: 0, transactions: 0 };
+      }
+      
+      revenueByDate[dateKey].revenue += payment.adminFee || 0;
+      revenueByDate[dateKey].transactions += 1;
+    });
+
+    // Convert to array and sort by date
+    const revenueTimeline = Object.values(revenueByDate).sort((a, b) => 
+      a.date.localeCompare(b.date)
+    );
+
+    // Define transaction list type
+    interface TransactionDetails {
+      id: number;
+      referenceNumber: string;
+      amount: number;
+      adminFee: number | null;
+      status: string;
+      orderStatus: string;
+      isFeeClaimed: boolean;
+      createdAt: Date;
+      creatorId: number;
+      clientId: number;
+      creatorName: string;
+      clientName: string;
+    }
+
+    // If detailed transactions are requested, include them
+    let transactionsList: TransactionDetails[] = [];
+    if (includeTransactions === 'true') {
+      // Get user details for the transactions
+      const userIds = [...new Set([...payments.map(p => p.userId), ...payments.map(p => p.clientId)])];
+      const users = await prisma.user.findMany({
+        where: {
+          id: { in: userIds }
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true
+        }
+      });
+
+      // Format transactions with user details
+      transactionsList = payments.map(payment => {
+        const creator = users.find(u => u.id === payment.userId);
+        const client = users.find(u => u.id === payment.clientId);
+        
+        return {
+          id: payment.id,
+          referenceNumber: payment.referenceNumber,
+          amount: payment.amount,
+          adminFee: payment.adminFee,
+          status: payment.status,
+          orderStatus: payment.orderStatus,
+          isFeeClaimed: payment.isFeeClaimed,
+          createdAt: payment.createdAt,
+          creatorId: payment.userId,
+          clientId: payment.clientId,
+          creatorName: creator 
+            ? `${creator.firstName || ''} ${creator.lastName || ''}`.trim() || creator.email 
+            : 'Unknown',
+          clientName: client 
+            ? `${client.firstName || ''} ${client.lastName || ''}`.trim() || client.email 
+            : 'Unknown'
+        };
+      });
+    }
+
+    const responseData: {
+      totalTransactions: number;
+      totalRevenue: number;
+      claimedRevenue: number;
+      unclaimedRevenue: number;
+      revenueTimeline: typeof revenueTimeline;
+      currency: string;
+      transactions?: TransactionDetails[];
+    } = {
+      totalTransactions,
+      totalRevenue: totalRevenue / 100, // Convert cents to dollars for display
+      claimedRevenue: claimedRevenue / 100,
+      unclaimedRevenue: unclaimedRevenue / 100,
+      revenueTimeline,
+      currency: 'USD'
     };
 
-    res.status(200).json(overview);
+    // Add transactions if requested
+    if (includeTransactions === 'true') {
+      responseData.transactions = transactionsList;
+    }
+
+    res.status(200).json(responseData);
   } catch (error) {
-    console.error('Error fetching app overview:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch app overview',
-      details: (error as Error).message
-    });
+    console.error('Error getting revenue analytics:', error);
+    res.status(500).json({ error: 'Failed to get revenue analytics' });
   }
 };
 
-// Get transaction details with pagination
-export const getTransactionDetails = async (req: AuthRequest, res: Response): Promise<void> => {
+// Update fee percentage
+const updateFeePercentage = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // Verify admin role
-    const admin = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
-      select: { role: true }
-    });
-
-    if (!admin || admin.role !== 'admin') {
-      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
       return;
     }
 
-    // Parse pagination parameters
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const offset = (page - 1) * limit;
+    // Check if user is admin
+    const admin = await isAdmin(userId);
+    if (!admin) {
+      res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+      return;
+    }
 
-    // Get transactions with user details
-    const transactions = await prisma.payment.findMany({
-      where: {
-        status: 'paid'
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            firstName: true,
-            lastName: true
-          }
-        },
-        client: {
-          select: {
-            id: true,
-            email: true,
-            firstName: true,
-            lastName: true
-          }
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      },
-      skip: offset,
-      take: limit
-    });
+    const { feePercentage } = req.body;
 
-    // Get total count for pagination
-    const totalCount = await prisma.payment.count({
-      where: {
-        status: 'paid'
+    // Validate fee percentage
+    if (typeof feePercentage !== 'number' || feePercentage < 0 || feePercentage > 50) {
+      res.status(400).json({ error: 'Fee percentage must be a number between 0 and 50' });
+      return;
+    }
+
+    // Update fee percentage in app settings
+    const settings = await prisma.appSettings.upsert({
+      where: { id: 1 },
+      update: { 
+        feePercentage,
+        value: feePercentage.toString(),
+        updatedAt: new Date(),
+        lastUpdatedBy: userId
+      },
+      create: { 
+        id: 1,
+        key: 'feePercentage',
+        value: feePercentage.toString(),
+        description: 'Platform fee percentage applied to transactions',
+        feePercentage,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastUpdatedBy: userId
       }
     });
 
-    // Calculate admin fee for each transaction if not present
-    const transactionsWithFees = transactions.map(transaction => {
-      // If adminFee is not set, calculate it
-      if (transaction.adminFee === null) {
-        return {
-          ...transaction,
-          calculatedAdminFee: calculateAdminFee(transaction.amount),
-          formattedAmount: formatCurrency(transaction.amount),
-          formattedAdminFee: formatCurrency(calculateAdminFee(transaction.amount))
+    res.status(200).json({ 
+      message: 'Fee percentage updated successfully',
+      feePercentage: settings.feePercentage
+    });
+  } catch (error) {
+    console.error('Error updating fee percentage:', error);
+    res.status(500).json({ error: 'Failed to update fee percentage' });
+  }
+};
+
+// Claim fees
+const claimFees = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+
+    // Check if user is admin
+    const admin = await isAdmin(userId);
+    if (!admin) {
+      res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    // Get payment IDs to claim or claim all if none specified
+    const { paymentIds } = req.body;
+    
+    let updateQuery;
+    if (paymentIds && Array.isArray(paymentIds) && paymentIds.length > 0) {
+      // Claim specific payments
+      updateQuery = prisma.payment.updateMany({
+        where: {
+          id: { in: paymentIds },
+          status: 'paid',
+          isFeeClaimed: false
+        },
+        data: { isFeeClaimed: true }
+      });
+    } else {
+      // Claim all unclaimed payments
+      updateQuery = prisma.payment.updateMany({
+        where: {
+          status: 'paid',
+          isFeeClaimed: false
+        },
+        data: { isFeeClaimed: true }
+      });
+    }
+
+    const result = await updateQuery;
+
+    res.status(200).json({
+      message: 'Fees claimed successfully',
+      claimedCount: result.count
+    });
+  } catch (error) {
+    console.error('Error claiming fees:', error);
+    res.status(500).json({ error: 'Failed to claim fees' });
+  }
+};
+
+// Get user growth analytics
+const getUserGrowthAnalytics = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+
+    // Check if user is admin
+    const admin = await isAdmin(userId);
+    if (!admin) {
+      res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    // Parse date range parameters
+    const { startDate, endDate, groupBy = 'day' } = req.query;
+    const start = startDate ? new Date(startDate as string) : new Date(new Date().setDate(new Date().getDate() - 30));
+    const end = endDate ? new Date(endDate as string) : new Date();
+
+    // Get all users created in the date range
+    const users = await prisma.user.findMany({
+      where: {
+        createdAt: {
+          gte: start,
+          lte: end
+        }
+      },
+      select: {
+        id: true,
+        createdAt: true,
+        role: true,
+        verified: true
+      }
+    });
+
+    // Calculate current totals
+    const totalUsers = await prisma.user.count();
+    const totalCreators = await prisma.user.count({
+      where: { role: 'creator' }
+    });
+    const verifiedUsers = await prisma.user.count({
+      where: { verified: true }
+    });
+
+    // Group by date and role
+    const userGrowthByDate: Record<string, { 
+      date: string, 
+      newUsers: number, 
+      newCreators: number,
+      newVerifiedUsers: number
+    }> = {};
+
+    users.forEach(user => {
+      let dateKey: string;
+      const date = new Date(user.createdAt);
+      
+      if (groupBy === 'month') {
+        dateKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+      } else if (groupBy === 'year') {
+        dateKey = date.getFullYear().toString();
+      } else { // day is default
+        dateKey = date.toISOString().split('T')[0];
+      }
+
+      if (!userGrowthByDate[dateKey]) {
+        userGrowthByDate[dateKey] = { 
+          date: dateKey, 
+          newUsers: 0, 
+          newCreators: 0,
+          newVerifiedUsers: 0
         };
       }
       
-      return {
-        ...transaction,
-        calculatedAdminFee: transaction.adminFee,
-        formattedAmount: formatCurrency(transaction.amount),
-        formattedAdminFee: formatCurrency(transaction.adminFee)
-      };
-    });
-
-    res.status(200).json({
-      transactions: transactionsWithFees,
-      pagination: {
-        page,
-        limit,
-        totalCount,
-        totalPages: Math.ceil(totalCount / limit)
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching transaction details:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch transaction details',
-      details: (error as Error).message
-    });
-  }
-};
-
-// Claim admin fees for specific transactions
-export const claimAdminFees = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    // Verify admin role
-    const admin = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
-      select: { role: true }
-    });
-
-    if (!admin || admin.role !== 'admin') {
-      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
-      return;
-    }
-
-    const { transactionIds } = req.body;
-
-    if (!transactionIds || !Array.isArray(transactionIds) || transactionIds.length === 0) {
-      res.status(400).json({ error: 'Transaction IDs array is required' });
-      return;
-    }
-
-    // Get the transactions to make sure they exist and are valid
-    const transactions = await prisma.payment.findMany({
-      where: {
-        id: { in: transactionIds },
-        status: 'paid',
-        isFeeClaimed: false
-      }
-    });
-
-    if (transactions.length === 0) {
-      res.status(404).json({ error: 'No valid unclaimed transactions found' });
-      return;
-    }
-
-    // Calculate admin fees and update transactions
-    const updates = transactions.map(transaction => {
-      const adminFee = transaction.adminFee ?? calculateAdminFee(transaction.amount);
+      userGrowthByDate[dateKey].newUsers += 1;
       
-      return prisma.payment.update({
-        where: { id: transaction.id },
-        data: {
-          adminFee,
-          isFeeClaimed: true
-        }
-      });
+      if (user.role === 'creator') {
+        userGrowthByDate[dateKey].newCreators += 1;
+      }
+      
+      if (user.verified) {
+        userGrowthByDate[dateKey].newVerifiedUsers += 1;
+      }
     });
 
-    // Execute all updates in parallel
-    const updatedTransactions = await Promise.all(updates);
-
-    // Calculate total claimed
-    const totalClaimed = updatedTransactions.reduce((sum, tx) => sum + (tx.adminFee || 0), 0);
+    // Convert to array and sort by date
+    const userGrowthTimeline = Object.values(userGrowthByDate).sort((a, b) => 
+      a.date.localeCompare(b.date)
+    );
 
     res.status(200).json({
-      message: `Successfully claimed admin fees for ${updatedTransactions.length} transactions`,
-      totalClaimed: formatCurrency(totalClaimed),
-      rawTotalClaimed: totalClaimed,
-      claimedTransactions: updatedTransactions.length
+      totalUsers,
+      totalCreators,
+      verifiedUsers,
+      userGrowthTimeline
     });
   } catch (error) {
-    console.error('Error claiming admin fees:', error);
-    res.status(500).json({ 
-      error: 'Failed to claim admin fees',
-      details: (error as Error).message
-    });
+    console.error('Error getting user growth analytics:', error);
+    res.status(500).json({ error: 'Failed to get user growth analytics' });
   }
 };
 
-// Generate daily analytics
-export const generateDailyAnalytics = async (req: AuthRequest, res: Response): Promise<void> => {
+// Get creator performance analytics
+const getCreatorPerformance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // Verify admin role
-    const admin = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
-      select: { role: true }
-    });
-
-    if (!admin || admin.role !== 'admin') {
-      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
       return;
     }
 
-    // Get the date to generate analytics for (default to today)
-    const dateParam = req.query.date as string;
-    const targetDate = dateParam ? new Date(dateParam) : new Date();
-    
-    // Format date as YYYY-MM-DD
-    const dateString = targetDate.toISOString().split('T')[0];
-    
-    // Define the date range for the day
-    const startOfDay = new Date(dateString);
-    startOfDay.setHours(0, 0, 0, 0);
-    
-    const endOfDay = new Date(dateString);
-    endOfDay.setHours(23, 59, 59, 999);
+    // Check if user is admin
+    const admin = await isAdmin(userId);
+    if (!admin) {
+      res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+      return;
+    }
 
-    // Get all transactions for the day
-    const transactions = await prisma.payment.findMany({
-      where: {
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        },
-        status: 'paid'
-      }
-    });
-
-    const totalTransactions = transactions.length;
-    const totalAmount = transactions.reduce((sum, tx) => sum + tx.amount, 0);
-    const adminRevenue = transactions.reduce((sum, tx) => {
-      if (tx.adminFee) {
-        return sum + tx.adminFee;
-      }
-      return sum + calculateAdminFee(tx.amount);
-    }, 0);
-
-    // Get user stats
-    const userCount = await prisma.user.count();
-    const newUsers = await prisma.user.count({
-      where: {
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        }
-      }
-    });
-    const activeUsers = await prisma.user.count({
-      where: {
-        updatedAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        }
-      }
-    });
-
-    // Get post stats
-    const postCount = await prisma.post.count();
-    const newPosts = await prisma.post.count({
-      where: {
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        }
-      }
-    });
-
-    // Get engagement stats
-    const engagementCount = await prisma.engagement.count({
-      where: {
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        }
-      }
-    });
-
-    // Get message stats
-    const messageCount = await prisma.message.count({
-      where: {
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        }
-      }
-    });
-
-    // Get copyright strikes for the day
-    const copyrightStrikes = await prisma.user.aggregate({
-      where: {
-        updatedAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        },
-        copyrightStrikes: {
-          gt: 0
-        }
-      },
-      _sum: {
-        copyrightStrikes: true
-      }
-    });
-
-    // Get top creators for the day
-    const topCreators = await prisma.payment.groupBy({
+    // Get top creators by earnings
+    const topCreatorsByEarnings = await prisma.payment.groupBy({
       by: ['userId'],
       where: {
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        },
         status: 'paid'
       },
       _sum: {
         amount: true
-      },
-      _count: {
-        id: true
       },
       orderBy: {
         _sum: {
@@ -478,9 +425,9 @@ export const generateDailyAnalytics = async (req: AuthRequest, res: Response): P
       take: 10
     });
 
-    // Get creator details
-    const creatorIds = topCreators.map(c => c.userId);
-    const creatorDetails = await prisma.user.findMany({
+    // Get creator details for the top earners
+    const creatorIds = topCreatorsByEarnings.map(c => c.userId);
+    const creators = await prisma.user.findMany({
       where: {
         id: { in: creatorIds }
       },
@@ -488,32 +435,134 @@ export const generateDailyAnalytics = async (req: AuthRequest, res: Response): P
         id: true,
         firstName: true,
         lastName: true,
-        email: true
+        email: true,
+        profilePicture: true,
+        creatorProfile: true
       }
     });
 
-    // Map creator details to top creators
-    const topCreatorsWithDetails = topCreators.map(creator => {
-      const details = creatorDetails.find(d => d.id === creator.userId);
-      return {
-        id: creator.userId,
-        name: details ? `${details.firstName} ${details.lastName}` : 'Unknown',
-        email: details?.email,
-        totalEarnings: formatCurrency(creator._sum.amount || 0),
-        rawEarnings: creator._sum.amount || 0,
-        transactions: creator._count.id
-      };
+    // Get top creators by engagement
+    const topCreatorsByEngagement = await prisma.engagement.groupBy({
+      by: ['creatorId'],
+      _count: {
+        id: true
+      },
+      orderBy: {
+        _count: {
+          id: 'desc'
+        }
+      },
+      take: 10
     });
 
-    // Get top posts by engagement
-    const topPosts = await prisma.engagement.groupBy({
+    // Get creator details for top engagement
+    const engagementCreatorIds = topCreatorsByEngagement.map(c => c.creatorId);
+    const engagementCreators = await prisma.user.findMany({
+      where: {
+        id: { in: engagementCreatorIds }
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        profilePicture: true,
+        creatorProfile: true
+      }
+    });
+
+    // Get top creators by ratings
+    const topCreatorsByRating = await prisma.rating.groupBy({
+      by: ['userId'],
+      _avg: {
+        rating: true
+      },
+      _count: {
+        id: true
+      },
+      having: {
+        id: {
+          _count: {
+            gt: 3 // Minimum number of ratings to be considered
+          }
+        }
+      },
+      orderBy: {
+        _avg: {
+          rating: 'desc'
+        }
+      },
+      take: 10
+    });
+
+    // Get creator details for top rated
+    const ratingCreatorIds = topCreatorsByRating.map(c => c.userId);
+    const ratingCreators = await prisma.user.findMany({
+      where: {
+        id: { in: ratingCreatorIds }
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        profilePicture: true,
+        creatorProfile: true
+      }
+    });
+
+    // Format the response
+    const formatCreatorList = (creatorList: any[], detailsList: any[], valueKey: string) => {
+      return creatorList.map(item => {
+        const creator = detailsList.find(c => c.id === item.userId || c.id === item.creatorId);
+        return {
+          id: creator?.id,
+          name: creator ? `${creator.firstName || ''} ${creator.lastName || ''}`.trim() || creator.email : 'Unknown',
+          email: creator?.email,
+          profilePicture: creator?.profilePicture,
+          profession: creator?.creatorProfile?.profession || 'N/A',
+          value: valueKey === 'earnings' 
+            ? (item._sum?.amount || 0) / 100 // Convert cents to dollars
+            : valueKey === 'engagement'
+              ? item._count?.id
+              : item._avg?.rating
+        };
+      });
+    };
+
+    res.status(200).json({
+      topEarners: formatCreatorList(topCreatorsByEarnings, creators, 'earnings'),
+      topEngagers: formatCreatorList(topCreatorsByEngagement, engagementCreators, 'engagement'),
+      topRated: formatCreatorList(topCreatorsByRating, ratingCreators, 'rating')
+    });
+  } catch (error) {
+    console.error('Error getting creator performance analytics:', error);
+    res.status(500).json({ error: 'Failed to get creator performance analytics' });
+  }
+};
+
+// Get content performance analytics (posts)
+const getContentPerformance = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+
+    // Check if user is admin
+    const admin = await isAdmin(userId);
+    if (!admin) {
+      res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    // Get top posts by views
+    const topPostsByViews = await prisma.engagement.groupBy({
       by: ['postId'],
       where: {
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        },
-        postId: { not: null }
+        type: 'post_view',
+        NOT: { postId: null }
       },
       _count: {
         id: true
@@ -527,354 +576,134 @@ export const generateDailyAnalytics = async (req: AuthRequest, res: Response): P
     });
 
     // Get post details
-    const postIds = topPosts
+    const postIds = topPostsByViews
       .map(p => p.postId)
       .filter((id): id is number => id !== null);
-      
-    const postDetails = await prisma.post.findMany({
+    
+    const posts = await prisma.post.findMany({
       where: {
         id: { in: postIds }
       },
       select: {
         id: true,
         title: true,
+        image: true,
+        audio: true,
+        video: true,
         userId: true,
         user: {
           select: {
             firstName: true,
-            lastName: true
+            lastName: true,
+            email: true
           }
         }
       }
     });
 
-    // Map post details to top posts
-    const topPostsWithDetails = topPosts
-      .filter(post => post.postId !== null) // Filter out posts with null ID
-      .map(post => {
-        const details = postDetails.find(d => d.id === post.postId);
-        return {
-          id: post.postId,
-          title: details?.title || 'Unknown',
-          authorName: details?.user ? `${details.user.firstName} ${details.user.lastName}` : 'Unknown',
-          authorId: details?.userId,
-          engagements: post._count.id
-        };
-      });
-
-    // Calculate average rating for the day
-    const ratings = await prisma.rating.aggregate({
+    // Get audio engagement stats
+    const audioEngagementStats = await prisma.engagement.groupBy({
+      by: ['postId'],
       where: {
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay
-        }
+        type: 'audio_play',
+        NOT: { postId: null }
+      },
+      _count: {
+        id: true
       },
       _avg: {
-        rating: true
-      }
-    });
-
-    // Create or update app analytics record
-    const appAnalytics = await prisma.appAnalytics.upsert({
-      where: {
-        date: dateString
-      },
-      create: {
-        date: dateString,
-        totalTransactions,
-        totalAmount,
-        adminRevenue,
-        userCount,
-        newUserCount: newUsers,
-        activeUserCount: activeUsers,
-        postCount,
-        newPostCount: newPosts,
-        engagementCount,
-        messageCount,
-        copyrightStrikes: copyrightStrikes._sum.copyrightStrikes || 0,
-        averageRating: ratings._avg.rating || null,
-        topCreators: JSON.stringify(topCreatorsWithDetails),
-        topPosts: JSON.stringify(topPostsWithDetails)
-      },
-      update: {
-        totalTransactions,
-        totalAmount,
-        adminRevenue,
-        userCount,
-        newUserCount: newUsers,
-        activeUserCount: activeUsers,
-        postCount,
-        newPostCount: newPosts,
-        engagementCount,
-        messageCount,
-        copyrightStrikes: copyrightStrikes._sum.copyrightStrikes || 0,
-        averageRating: ratings._avg.rating || null,
-        topCreators: JSON.stringify(topCreatorsWithDetails),
-        topPosts: JSON.stringify(topPostsWithDetails),
-        updatedAt: new Date()
-      }
-    });
-
-    res.status(200).json({
-      message: `Analytics generated for ${dateString}`,
-      analytics: {
-        ...appAnalytics,
-        topCreators: topCreatorsWithDetails,
-        topPosts: topPostsWithDetails,
-        formattedTotalAmount: formatCurrency(totalAmount),
-        formattedAdminRevenue: formatCurrency(adminRevenue)
-      }
-    });
-  } catch (error) {
-    console.error('Error generating daily analytics:', error);
-    res.status(500).json({ 
-      error: 'Failed to generate daily analytics',
-      details: (error as Error).message
-    });
-  }
-};
-
-// Get analytics for a date range
-export const getAnalyticsRange = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    // Verify admin role
-    const admin = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
-      select: { role: true }
-    });
-
-    if (!admin || admin.role !== 'admin') {
-      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
-      return;
-    }
-
-    // Get the start and end dates from the query
-    const startDate = req.query.startDate as string;
-    const endDate = req.query.endDate as string;
-
-    if (!startDate || !endDate) {
-      res.status(400).json({ error: 'Both startDate and endDate are required' });
-      return;
-    }
-
-    // Fetch analytics data for the date range
-    const analyticsData = await prisma.appAnalytics.findMany({
-      where: {
-        date: {
-          gte: startDate,
-          lte: endDate
-        }
+        duration: true
       },
       orderBy: {
-        date: 'asc'
-      }
+        _count: {
+          id: 'desc'
+        }
+      },
+      take: 10
     });
 
-    // Parse JSON fields
-    const parsedData = analyticsData.map(data => {
-      return {
-        ...data,
-        topCreators: data.topCreators ? JSON.parse(data.topCreators) : [],
-        topPosts: data.topPosts ? JSON.parse(data.topPosts) : [],
-        formattedTotalAmount: formatCurrency(data.totalAmount),
-        formattedAdminRevenue: formatCurrency(data.adminRevenue)
-      };
-    });
-
-    // Calculate summary metrics
-    const summary = {
-      totalTransactions: parsedData.reduce((sum, day) => sum + day.totalTransactions, 0),
-      totalAmount: parsedData.reduce((sum, day) => sum + day.totalAmount, 0),
-      adminRevenue: parsedData.reduce((sum, day) => sum + day.adminRevenue, 0),
-      newUsers: parsedData.reduce((sum, day) => sum + day.newUserCount, 0),
-      newPosts: parsedData.reduce((sum, day) => sum + day.newPostCount, 0),
-      engagements: parsedData.reduce((sum, day) => sum + day.engagementCount, 0),
-      messages: parsedData.reduce((sum, day) => sum + day.messageCount, 0),
-      copyrightStrikes: parsedData.reduce((sum, day) => sum + day.copyrightStrikes, 0),
-      // Calculate average of average ratings
-      averageRating: parsedData.reduce((sum, day) => {
-        if (day.averageRating === null) return sum;
-        return sum + day.averageRating;
-      }, 0) / parsedData.filter(day => day.averageRating !== null).length || 0
+    // Format the response
+    const formatPostList = (postList: any[]) => {
+      return postList.map(item => {
+        const post = posts.find(p => p.id === item.postId);
+        return {
+          id: item.postId,
+          title: post?.title || 'Unknown Post',
+          image: post?.image,
+          hasAudio: !!post?.audio,
+          hasVideo: !!post?.video,
+          creatorName: post?.user 
+            ? `${post.user.firstName || ''} ${post.user.lastName || ''}`.trim() || post.user.email 
+            : 'Unknown',
+          creatorId: post?.userId,
+          viewCount: item._count?.id || 0,
+          avgDuration: item._avg?.duration || 0
+        };
+      });
     };
 
     res.status(200).json({
-      data: parsedData,
-      summary: {
-        ...summary,
-        formattedTotalAmount: formatCurrency(summary.totalAmount),
-        formattedAdminRevenue: formatCurrency(summary.adminRevenue)
-      },
-      dateRange: {
-        startDate,
-        endDate,
-        days: parsedData.length
-      }
+      topViewedPosts: formatPostList(topPostsByViews),
+      topAudioEngagements: formatPostList(audioEngagementStats)
     });
   } catch (error) {
-    console.error('Error fetching analytics range:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch analytics data',
-      details: (error as Error).message
-    });
+    console.error('Error getting content performance analytics:', error);
+    res.status(500).json({ error: 'Failed to get content performance analytics' });
   }
 };
 
-// Update payment to record admin fee
-export const updateAdminFee = async (req: AuthRequest, res: Response): Promise<void> => {
+// Get current fee percentage
+const getCurrentFeePercentage = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // Verify admin role
-    const admin = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
-      select: { role: true }
-    });
-
-    if (!admin || admin.role !== 'admin') {
-      res.status(403).json({ error: 'Unauthorized: Only admins can access this endpoint' });
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
       return;
     }
 
-    const { paymentId } = req.params;
+    const settings = await prisma.appSettings.findFirst({
+      where: { key: 'feePercentage' },
+      select: { 
+        feePercentage: true,
+        updatedAt: true,
+        lastUpdatedBy: true
+      }
+    });
+
+    let feePercentage = 20.0; // Default if not set
     
-    if (!paymentId) {
-      res.status(400).json({ error: 'Payment ID is required' });
-      return;
-    }
-
-    // Get the payment
-    const payment = await prisma.payment.findUnique({
-      where: { id: parseInt(paymentId) }
-    });
-
-    if (!payment) {
-      res.status(404).json({ error: 'Payment not found' });
-      return;
-    }
-
-    // Calculate admin fee
-    const adminFee = calculateAdminFee(payment.amount);
-
-    // Update the payment
-    const updatedPayment = await prisma.payment.update({
-      where: { id: parseInt(paymentId) },
-      data: {
-        adminFee,
-        isFeeClaimed: false
-      }
-    });
-
-    res.status(200).json({
-      message: 'Admin fee updated successfully',
-      payment: {
-        ...updatedPayment,
-        formattedAmount: formatCurrency(updatedPayment.amount),
-        formattedAdminFee: formatCurrency(updatedPayment.adminFee || 0)
-      }
-    });
-  } catch (error) {
-    console.error('Error updating admin fee:', error);
-    res.status(500).json({ 
-      error: 'Failed to update admin fee',
-      details: (error as Error).message
-    });
-  }
-};
-
-// Set up a scheduled job to run analytics (can be called via cron or manually)
-export const runScheduledAnalytics = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    // This can be open to admins or triggered by a cron job with proper auth
-    const isAdmin = req.user && await prisma.user.findUnique({
-      where: { id: req.user.userId },
-      select: { role: true }
-    }).then(user => user?.role === 'admin');
-
-    const isScheduledJob = req.headers['x-scheduled-job'] === process.env.SCHEDULED_JOB_SECRET;
-
-    if (!isAdmin && !isScheduledJob) {
-      res.status(403).json({ error: 'Unauthorized: Only admins or scheduled jobs can trigger this endpoint' });
-      return;
-    }
-
-    // Default to yesterday for scheduled jobs
-    const date = new Date();
-    date.setDate(date.getDate() - 1);
-    const dateString = date.toISOString().split('T')[0];
-
-    // Create a mock request and response for internal API call
-    const mockReq = {
-      user: { userId: req.user?.userId || 1 }, // Use the actual user or default to ID 1
-      query: { date: dateString }
-    } as unknown as AuthRequest;
-
-    let analyticsResult: any = null;
-
-    // Create a mock response
-    const mockRes = {
-      status: (_code: number) => {
-        return {
-          json: (data: any) => {
-            analyticsResult = data;
-            return mockRes;
-          }
-        };
-      }
-    } as unknown as Response;
-
-    // Run the generate analytics function
-    await generateDailyAnalytics(mockReq, mockRes);
-
-    if (!analyticsResult) {
-      throw new Error('Failed to generate analytics');
-    }
-
-    // Notify admins about the analytics
-    const admins = await prisma.user.findMany({
-      where: { role: 'admin' }
-    });
-
-    for (const admin of admins) {
-      const analytics = analyticsResult.analytics;
-      
-      // Create a notification for each admin
-      await createNotification(
-        admin.id,
-        'admin_alert',
-        `Daily Analytics for ${dateString}`,
-        `<p>The daily analytics report for ${dateString} has been generated.</p>
-        <p><strong>Summary:</strong></p>
-        <ul>
-          <li>Transactions: ${analytics.totalTransactions}</li>
-          <li>Revenue: ${analytics.formattedTotalAmount}</li>
-          <li>Admin Revenue: ${analytics.formattedAdminRevenue}</li>
-          <li>New Users: ${analytics.newUserCount}</li>
-          <li>New Posts: ${analytics.newPostCount}</li>
-        </ul>
-        <p>View the complete report in the admin dashboard.</p>`
-      );
+    if (settings) {
+      feePercentage = settings.feePercentage;
+    } else {
+      // Create default setting if it doesn't exist
+      await prisma.appSettings.create({
+        data: {
+          key: 'feePercentage',
+          value: feePercentage.toString(),
+          description: 'Platform fee percentage applied to transactions',
+          feePercentage,
+          lastUpdatedBy: userId
+        }
+      });
     }
 
     res.status(200).json({
-      message: `Scheduled analytics job completed for ${dateString}`,
-      result: analyticsResult
+      feePercentage,
+      lastUpdated: settings?.updatedAt,
+      lastUpdatedBy: settings?.lastUpdatedBy
     });
   } catch (error) {
-    console.error('Error running scheduled analytics:', error);
-    res.status(500).json({ 
-      error: 'Failed to run scheduled analytics',
-      details: (error as Error).message
-    });
+    console.error('Error getting fee percentage:', error);
+    res.status(500).json({ error: 'Failed to get fee percentage' });
   }
 };
 
-// Export functions
 export default {
-  getAppOverview,
-  getTransactionDetails,
-  claimAdminFees,
-  generateDailyAnalytics,
-  getAnalyticsRange,
-  updateAdminFee,
-  runScheduledAnalytics
-}; 
+  getRevenueAnalytics,
+  updateFeePercentage,
+  claimFees,
+  getUserGrowthAnalytics,
+  getCreatorPerformance,
+  getContentPerformance,
+  getCurrentFeePercentage
+};
