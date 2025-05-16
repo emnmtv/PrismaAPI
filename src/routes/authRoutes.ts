@@ -133,6 +133,7 @@ authRouter.get('/admin/analytics/content', authenticateToken, adminAnalyticsCont
 authRouter.get('/admin/settings/fee', authenticateToken, adminAnalyticsController.getCurrentFeePercentage);
 authRouter.put('/admin/settings/fee', authenticateToken, adminAnalyticsController.updateFeePercentage);
 authRouter.post('/admin/claim-fees', authenticateToken, adminAnalyticsController.claimFees);
+authRouter.post('/admin/fix-admin-fees', authenticateToken, adminAnalyticsController.fixAdminFees);
 
 // Add this route
 authRouter.post('/google-login', handleGoogleLogin);

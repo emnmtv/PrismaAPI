@@ -2,7 +2,21 @@ import { Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from '../middleware/authRequest';
 
-const prisma = new PrismaClient();
+// PrismaClient singleton pattern
+const globalForPrisma = global as unknown as { prisma: PrismaClient };
+
+const prisma =
+  globalForPrisma.prisma ||
+  new PrismaClient({
+    log: ['query', 'error', 'warn'],
+  });
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+
+// Ensure prisma disconnects properly on shutdown
+process.on('beforeExit', async () => {
+  await prisma.$disconnect();
+});
 
 // Helper function to check if user is admin
 const isAdmin = async (userId: number): Promise<boolean> => {
@@ -34,7 +48,7 @@ const getRevenueAnalytics = async (req: AuthRequest, res: Response): Promise<voi
     const start = startDate ? new Date(startDate as string) : new Date(new Date().setDate(new Date().getDate() - 30));
     const end = endDate ? new Date(endDate as string) : new Date();
 
-    // Get all completed payments with admin fees
+    // Get all completed payments with admin fees - optimize by selecting only needed fields
     const payments = await prisma.payment.findMany({
       where: {
         status: 'paid',
@@ -54,7 +68,10 @@ const getRevenueAnalytics = async (req: AuthRequest, res: Response): Promise<voi
         referenceNumber: true,
         userId: true,
         clientId: true
-      }
+      },
+      // Add a reasonable limit to handle large datasets in production
+      // Can be removed if pagination is implemented
+      take: 1000
     });
 
     // Calculate totals
@@ -176,7 +193,7 @@ const getRevenueAnalytics = async (req: AuthRequest, res: Response): Promise<voi
 
     res.status(200).json(responseData);
   } catch (error) {
-    console.error('Error getting revenue analytics:', error);
+    console.error('Error getting revenue analytics:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to get revenue analytics' });
   }
 };
@@ -231,7 +248,7 @@ const updateFeePercentage = async (req: AuthRequest, res: Response): Promise<voi
       feePercentage: settings.feePercentage
     });
   } catch (error) {
-    console.error('Error updating fee percentage:', error);
+    console.error('Error updating fee percentage:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to update fee percentage' });
   }
 };
@@ -284,7 +301,7 @@ const claimFees = async (req: AuthRequest, res: Response): Promise<void> => {
       claimedCount: result.count
     });
   } catch (error) {
-    console.error('Error claiming fees:', error);
+    console.error('Error claiming fees:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to claim fees' });
   }
 };
@@ -387,7 +404,7 @@ const getUserGrowthAnalytics = async (req: AuthRequest, res: Response): Promise<
       userGrowthTimeline
     });
   } catch (error) {
-    console.error('Error getting user growth analytics:', error);
+    console.error('Error getting user growth analytics:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to get user growth analytics' });
   }
 };
@@ -536,7 +553,7 @@ const getCreatorPerformance = async (req: AuthRequest, res: Response): Promise<v
       topRated: formatCreatorList(topCreatorsByRating, ratingCreators, 'rating')
     });
   } catch (error) {
-    console.error('Error getting creator performance analytics:', error);
+    console.error('Error getting creator performance analytics:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to get creator performance analytics' });
   }
 };
@@ -647,7 +664,7 @@ const getContentPerformance = async (req: AuthRequest, res: Response): Promise<v
       topAudioEngagements: formatPostList(audioEngagementStats)
     });
   } catch (error) {
-    console.error('Error getting content performance analytics:', error);
+    console.error('Error getting content performance analytics:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to get content performance analytics' });
   }
 };
@@ -693,8 +710,65 @@ const getCurrentFeePercentage = async (req: AuthRequest, res: Response): Promise
       lastUpdatedBy: settings?.lastUpdatedBy
     });
   } catch (error) {
-    console.error('Error getting fee percentage:', error);
+    console.error('Error getting fee percentage:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to get fee percentage' });
+  }
+};
+
+// Fix admin fees for existing payments
+const fixAdminFees = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+
+    // Check if user is admin
+    const admin = await isAdmin(userId);
+    if (!admin) {
+      res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+      return;
+    }
+
+    // Get current fee percentage
+    const settings = await prisma.appSettings.findFirst({
+      where: { key: 'feePercentage' },
+      select: { feePercentage: true }
+    });
+    
+    const feePercentage = settings?.feePercentage || 20.0;
+
+    // Find all paid payments with null adminFee
+    const paymentsToFix = await prisma.payment.findMany({
+      where: {
+        status: 'paid',
+        adminFee: null
+      },
+      select: {
+        id: true,
+        amount: true
+      }
+    });
+
+    // Update each payment with the correct admin fee
+    const updates = paymentsToFix.map(payment => {
+      const adminFee = Math.round(payment.amount * (feePercentage / 100));
+      return prisma.payment.update({
+        where: { id: payment.id },
+        data: { adminFee }
+      });
+    });
+
+    await prisma.$transaction(updates);
+
+    res.status(200).json({
+      message: 'Admin fees fixed successfully',
+      fixedCount: paymentsToFix.length
+    });
+  } catch (error) {
+    console.error('Error fixing admin fees:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Failed to fix admin fees' });
   }
 };
 
@@ -705,5 +779,6 @@ export default {
   getUserGrowthAnalytics,
   getCreatorPerformance,
   getContentPerformance,
-  getCurrentFeePercentage
+  getCurrentFeePercentage,
+  fixAdminFees
 };

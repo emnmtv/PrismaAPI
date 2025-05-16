@@ -7,6 +7,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import './utils/paymentCleanup'; // Import the payment cleanup job
 import './utils/paymentStatusChecker'; // Import the payment status checker
+import { startCopyrightRecheckService } from './utils/authUtils'; // Import the copyright recheck service
 const app = express();
 const PORT = Number(process.env.PORT) || 3200;  // Ensuring it's a number
 
@@ -87,4 +88,8 @@ io.on('connection', (socket) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on http://localhost:${PORT}`);
   console.log(`Server is accessible on the network at http://192.168.0.104:${PORT}`); // Added log for network access
+  
+  // Start the copyright recheck service with a 5-minute interval
+  startCopyrightRecheckService(5);
+  console.log('Copyright recheck service started with 5-minute interval');
 });

@@ -61,6 +61,38 @@ const createNotification = async (
   metadata?: any
 ) => {
   try {
+    // Limit the size of metadata by removing large objects if present
+    let metadataString = null;
+    if (metadata) {
+      // If there's copyrightInfo containing large objects, simplify it
+      if (metadata.copyrightInfo) {
+        // Create a simplified version with just essential info
+        const simplifiedCopyrightInfo = {
+          isDetected: metadata.copyrightInfo.isDetected,
+          songInfo: metadata.copyrightInfo.songInfo ? {
+            title: metadata.copyrightInfo.songInfo.title || 'Unknown',
+            artist: metadata.copyrightInfo.songInfo.artist || 'Unknown'
+          } : null,
+        };
+        
+        // Replace the original with the simplified version
+        metadata.copyrightInfo = simplifiedCopyrightInfo;
+      }
+      
+      // Convert to string and check length
+      metadataString = JSON.stringify(metadata);
+      
+      // If still too long (over 1000 chars), truncate further
+      if (metadataString.length > 1000) {
+        console.warn(`Metadata too large (${metadataString.length} chars), truncating`);
+        // Create minimal metadata with just the essential info
+        metadataString = JSON.stringify({
+          truncated: true,
+          message: "Metadata was too large and has been truncated"
+        });
+      }
+    }
+    
     const notification = await prisma.notification.create({
       data: {
         userId,
@@ -68,7 +100,7 @@ const createNotification = async (
         title,
         message,
         relatedId,
-        metadata: metadata ? JSON.stringify(metadata) : null,
+        metadata: metadataString,
       },
     });
     
@@ -634,8 +666,49 @@ const createPost = async (
 
     // Check for audio file and run copyright detection if present
     let copyrightInfo = null;
+    let copyrightInfoString = null;
+    
     if (audio) {
       copyrightInfo = await checkAudioCopyright(audio, userId);
+      
+      if (copyrightInfo) {
+        // Extract only the essential information to reduce size
+        const minimizedInfo = {
+          isDetected: !!copyrightInfo.isDetected
+        };
+        
+        // Add song info if available and detected
+        if (copyrightInfo.isDetected && copyrightInfo.songInfo) {
+          Object.assign(minimizedInfo, {
+            songInfo: {
+              title: copyrightInfo.songInfo.title || 'Unknown',
+              artist: copyrightInfo.songInfo.artist || 'Unknown'
+            }
+          });
+        }
+        
+        // Add warning or error if present
+        if (typeof copyrightInfo.warning === 'string') {
+          Object.assign(minimizedInfo, { warning: copyrightInfo.warning });
+        }
+        
+        if (typeof copyrightInfo.error === 'string') {
+          Object.assign(minimizedInfo, { error: copyrightInfo.error });
+        }
+        
+        // Convert to string
+        copyrightInfoString = JSON.stringify(minimizedInfo);
+        
+        // Check length and truncate if needed
+        if (copyrightInfoString && copyrightInfoString.length > 1000) {
+          console.warn(`Copyright info too large (${copyrightInfoString.length} chars), truncating`);
+          copyrightInfoString = JSON.stringify({
+            isDetected: !!copyrightInfo.isDetected,
+            truncated: true,
+            message: "Copyright info was too large and has been truncated"
+          });
+        }
+      }
     }
 
     // Create the new post
@@ -650,7 +723,7 @@ const createPost = async (
         image,
         video,
         audio, // Add audio field
-        copyrightInfo: copyrightInfo ? JSON.stringify(copyrightInfo) : null // Store copyright info
+        copyrightInfo: copyrightInfoString // Store minimized copyright info
       },
     });
     
@@ -1941,11 +2014,26 @@ const getPendingVerificationRequests = async () => {
             lastName: true,
             email: true,
             profilePicture: true,
-            createdAt: true
-          },
-          include: {
+            createdAt: true,
             creatorProfile: true,
-            posts: true
+            posts:{
+              select:{
+                id:true,
+                audio:true,
+                copyrightInfo:true,
+                createdAt:true,
+                updatedAt:true,
+                status:true,
+                title:true,
+                description:true,
+                detailedDescription:true,
+                amount:true,
+                remarks:true,
+                image:true,
+                video:true,
+                
+              }
+            }
           }
         }
       },
@@ -1959,6 +2047,197 @@ const getPendingVerificationRequests = async () => {
     console.error('Error fetching verification requests:', error);
     throw error;
   }
+};
+
+// Function to periodically recheck copyright for audio files
+const recheckCopyright = async () => {
+  try {
+    console.log('[Copyright Service] Starting scheduled copyright recheck...');
+    
+    // Find posts with audio files that are older than 1 day and haven't been rechecked in the last 24 hours
+    // Limiting to 10 at a time to avoid overloading the service
+    const postsToRecheck = await prisma.post.findMany({
+      where: {
+        audio: { not: null },
+        createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // Older than 1 day
+        updatedAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // Not updated in the last 24 hours
+      },
+      select: {
+        id: true,
+        userId: true,
+        audio: true,
+        copyrightInfo: true,
+      },
+      take: 10,
+      orderBy: {
+        updatedAt: 'asc', // Oldest updated first
+      },
+    });
+    
+    if (postsToRecheck.length === 0) {
+      console.log('[Copyright Service] No posts need rechecking at this time.');
+      return;
+    }
+    
+    console.log(`[Copyright Service] Found ${postsToRecheck.length} posts to recheck.`);
+    
+    // Recheck each post
+    for (const post of postsToRecheck) {
+      try {
+        console.log(`[Copyright Service] Rechecking post ${post.id}...`);
+        
+        // Skip if no audio file
+        if (!post.audio) {
+          console.log(`[Copyright Service] Post ${post.id} has no audio file to check. Skipping.`);
+          continue;
+        }
+        
+        // Recheck the audio file
+        const newCopyrightInfo = await checkAudioCopyright(post.audio, post.userId);
+        
+        // Format copyright info for storage
+        let copyrightInfoString = null;
+        
+        if (newCopyrightInfo) {
+          // Extract only the essential information to reduce size
+          const minimizedInfo = {
+            isDetected: !!newCopyrightInfo.isDetected,
+            lastChecked: new Date().toISOString(),
+            checkCount: 1, // Initialize check count
+          };
+          
+          // Add song info if available and detected
+          if (newCopyrightInfo.isDetected && newCopyrightInfo.songInfo) {
+            Object.assign(minimizedInfo, {
+              songInfo: {
+                title: newCopyrightInfo.songInfo.title || 'Unknown',
+                artist: newCopyrightInfo.songInfo.artist || 'Unknown'
+              }
+            });
+          }
+          
+          // Add warning or error if present
+          if (typeof newCopyrightInfo.warning === 'string') {
+            Object.assign(minimizedInfo, { warning: newCopyrightInfo.warning });
+          }
+          
+          if (typeof newCopyrightInfo.error === 'string') {
+            Object.assign(minimizedInfo, { error: newCopyrightInfo.error });
+          }
+          
+          // If previous check exists, increment check count
+          try {
+            if (post.copyrightInfo) {
+              const previousInfo = JSON.parse(post.copyrightInfo);
+              if (previousInfo && typeof previousInfo === 'object' && previousInfo.checkCount) {
+                minimizedInfo.checkCount = previousInfo.checkCount + 1;
+              }
+            }
+          } catch (e) {
+            console.error(`[Copyright Service] Error parsing previous copyright info for post ${post.id}:`, e);
+          }
+          
+          // Convert to string
+          copyrightInfoString = JSON.stringify(minimizedInfo);
+          
+          // Check length and truncate if needed
+          if (copyrightInfoString && copyrightInfoString.length > 1000) {
+            console.warn(`[Copyright Service] Copyright info too large (${copyrightInfoString.length} chars), truncating`);
+            copyrightInfoString = JSON.stringify({
+              isDetected: !!newCopyrightInfo.isDetected,
+              truncated: true,
+              lastChecked: new Date().toISOString(),
+              checkCount: minimizedInfo.checkCount,
+              message: "Copyright info was too large and has been truncated"
+            });
+          }
+        }
+        
+        // Update the post with new copyright info
+        await prisma.post.update({
+          where: { id: post.id },
+          data: {
+            copyrightInfo: copyrightInfoString,
+            updatedAt: new Date(), // Update timestamp
+          },
+        });
+        
+        // If copyright is newly detected that wasn't before, create notification
+        if (newCopyrightInfo && newCopyrightInfo.isDetected) {
+          try {
+            // Check if it was detected before
+            let wasDetectedBefore = false;
+            if (post.copyrightInfo) {
+              try {
+                const oldInfo = JSON.parse(post.copyrightInfo);
+                wasDetectedBefore = oldInfo && oldInfo.isDetected;
+              } catch (e) {
+                console.error(`[Copyright Service] Error parsing old copyright info:`, e);
+              }
+            }
+            
+            // If newly detected, handle the copyright strike
+            if (!wasDetectedBefore) {
+              console.log(`[Copyright Service] New copyright detected for post ${post.id}, creating strike notification.`);
+              await handleCopyrightStrike(post.userId, post.id, newCopyrightInfo);
+            }
+          } catch (e) {
+            console.error(`[Copyright Service] Error handling copyright strike:`, e);
+          }
+        }
+        
+        console.log(`[Copyright Service] Successfully rechecked post ${post.id}`);
+      } catch (error) {
+        console.error(`[Copyright Service] Error rechecking post ${post.id}:`, error);
+      }
+      
+      // Add a small delay between requests to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    console.log(`[Copyright Service] Completed recheck cycle for ${postsToRecheck.length} posts.`);
+  } catch (error) {
+    console.error('[Copyright Service] Error in copyright recheck service:', error);
+  }
+};
+
+// Timer reference to store the interval
+let copyrightRecheckTimer: NodeJS.Timeout | null = null;
+
+// Function to start the copyright recheck service
+const startCopyrightRecheckService = (intervalMinutes = 5) => {
+  // Don't start if already running
+  if (copyrightRecheckTimer) {
+    console.log('[Copyright Service] Service is already running.');
+    return;
+  }
+  
+  const intervalMs = intervalMinutes * 60 * 1000;
+  
+  console.log(`[Copyright Service] Starting copyright recheck service with ${intervalMinutes} minute interval.`);
+  
+  // Run once immediately
+  recheckCopyright().catch(err => console.error('[Copyright Service] Initial check error:', err));
+  
+  // Then set up regular interval
+  copyrightRecheckTimer = setInterval(() => {
+    recheckCopyright().catch(err => console.error('[Copyright Service] Scheduled check error:', err));
+  }, intervalMs);
+  
+  // Return the timer so it can be cleared if needed
+  return copyrightRecheckTimer;
+};
+
+// Function to stop the copyright recheck service
+const stopCopyrightRecheckService = () => {
+  if (copyrightRecheckTimer) {
+    clearInterval(copyrightRecheckTimer);
+    copyrightRecheckTimer = null;
+    console.log('[Copyright Service] Copyright recheck service stopped.');
+    return true;
+  }
+  console.log('[Copyright Service] No copyright recheck service running.');
+  return false;
 };
 
 export { registerUser, 
@@ -1975,5 +2254,7 @@ export { registerUser,
   resetPassword,
   applyForVerification,
   reviewCreatorVerification,
-  getPendingVerificationRequests
+  getPendingVerificationRequests,
+  startCopyrightRecheckService,
+  stopCopyrightRecheckService
 };

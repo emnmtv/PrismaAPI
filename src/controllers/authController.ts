@@ -832,6 +832,18 @@ export const handleInitiatePayment = async (req: AuthRequest, res: Response): Pr
   }
 
   try {
+    // Get current fee percentage from app settings
+    const settings = await prisma.appSettings.findFirst({
+      where: { key: 'feePercentage' },
+      select: { feePercentage: true }
+    });
+    
+    // Default to 20% if not set
+    const feePercentage = settings?.feePercentage || 20.0;
+    
+    // Calculate admin fee (percentage of the amount)
+    const adminFee = Math.round(amount * (feePercentage / 100));
+
     // Create the payment link using the utility function
     const paymentLink = await createPaymentLink(amount, description, remarks, clientId); // Pass clientId
 
@@ -846,6 +858,7 @@ export const handleInitiatePayment = async (req: AuthRequest, res: Response): Pr
         description: description,
         remarks: remarks,
         status: paymentLink.status,
+        adminFee: adminFee, // Add the admin fee
       },
     });
 
@@ -907,10 +920,26 @@ export const handleCheckPaymentStatus = async (req: AuthRequest, res: Response):
     // Here you can call the PayMongo API to check the status
     const paymentStatus = await checkPaymentStatus(referenceNumber); // Call the function to check payment status
 
+    // If payment status changed to paid and adminFee is not set, calculate it
+    let updateData: any = { status: paymentStatus };
+    
+    if (paymentStatus === 'paid' && payment.adminFee === null) {
+      // Get fee percentage from settings
+      const settings = await prisma.appSettings.findFirst({
+        where: { key: 'feePercentage' },
+        select: { feePercentage: true }
+      });
+      
+      const feePercentage = settings?.feePercentage || 20.0;
+      const adminFee = Math.round(payment.amount * (feePercentage / 100));
+      
+      updateData.adminFee = adminFee;
+    }
+
     // Update the payment status in the database
     await prisma.payment.update({
       where: { referenceNumber: referenceNumber },
-      data: { status: paymentStatus }, // Update the status field
+      data: updateData,
     });
 
     res.status(200).json({ status: paymentStatus });
